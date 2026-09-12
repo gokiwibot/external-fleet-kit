@@ -1,0 +1,23 @@
+{
+    "$schema": "https://json.schemastore.org/tsconfig",
+    "compilerOptions": {
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "target": "ES2024",
+        "lib": ["ES2024"],
+        "allowJs": true,
+        "resolveJsonModule": true,
+        "moduleDetection": "force",
+        "isolatedModules": true,
+        "verbatimModuleSyntax": true,
+        "jsx": "react-jsx",
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "noEmit": true,
+        "types": ["node", "react"]
+    },
+    "include": ["src", "test", "scripts", "efk.config.ts"],
+    "exclude": ["node_modules", "dist"]
+}

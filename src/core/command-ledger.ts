@@ -1,25 +1,27 @@
 /**
  * Every command a bot has ever been asked to run, by id. This is where idempotency lives (design
  * §9.3): a known id never reaches the driver again, and the caller answers with the recorded status.
+ * `accept()` and `reject()` on an id already in the ledger record nothing and return the status that
+ * is already there — remi resends the same id up to three times, and a resend must never restamp a
+ * command, move a terminal backwards, or erase an outcome that has not been published yet.
  *
  * `rejected` and `failed` are different things (umbrella H1): rejected never started, failed was
  * accepted and will not finish. `REPLACED` is an internal marker for a navigation displaced by a
  * newer one under `supports_command_interrupt`; the contract has no such state, so it never leaves
  * this module — `current_command` simply becomes the new command.
  *
- * THE SINGLE SLOT. `current_command` is one field, and a rejection competes with the navigation that
- * is still running. Left to itself, a rejection would either stick — and remi, which reads states and
- * not a queue, would watch the running command vanish and give the work up for lost — or never be
- * published, and remi would resend. So: a rejection owns the slot until it has been published in at
- * least one BotState (`markPublished`), and then the slot returns to the still-running command. With
- * nothing else running, the rejection stays. N2 writes the same sentence on the page.
+ * THE SINGLE SLOT. `current_command` is one field, and the outcome of a command competes with the
+ * navigation that is still running. Left to itself, an outcome would either stick — and remi, which
+ * reads states and not a queue, would watch the running command vanish and give the work up for lost
+ * — or never be published, and remi would resend or hang until the job step timed out. The invariant
+ * is therefore: **every terminal status is published in at least one BotState**. remi asked for these
+ * commands; it must learn how each one ended.
  *
- * That rule has two halves, and both are enforced here. The release half is `current()`, which hands
- * the slot back once `publishedOnce` is set. The hold half is `holdsUnpublishedRejection()`: a
- * command recorded while a rejection is still waiting for its first publish does NOT take the slot.
- * Without it, a command accepted inside the same 250 ms tick would evict the rejection before remi
- * ever saw it, remi would never learn its command was refused, and the job step would hang until it
- * timed out.
+ * So terminal statuses queue up in `unpublishedTerminals`, oldest first, `current()` returns the head
+ * while the queue is non-empty, and `markPublished` pops it. Once the queue drains, the slot goes
+ * back to the live command, so the queue can never starve it; with nothing live, the last status
+ * published stays in the slot. That subsumes the rejection rule N2 writes on the page (a rejection is
+ * just one kind of terminal) and nothing is ever shown twice, because a popped id is never re-queued.
  */
 import type { BotPosition, CommandStatus, CommandType, RejectionCode } from '../contract/schemas'
 
@@ -31,7 +33,9 @@ export interface CommandLedger {
     accept(id: string, type: CommandType, correction?: Correction): CommandStatus
     reject(id: string, type: CommandType, code: RejectionCode, message: string, correctionDistanceM?: number): CommandStatus
     markExecuting(id: string): boolean
-    complete(id: string, terminal: 'succeeded' | 'failed', error?: { code: string; message: string }): boolean
+    /** A `failed` completion must carry the error: the contract requires one on a failed CommandStatus. */
+    complete(id: string, terminal: 'succeeded', error?: undefined): boolean
+    complete(id: string, terminal: 'failed', error: { code: string; message: string }): boolean
     replace(previousId: string): void
     /** What goes into BotState.current_command, applying the single-slot rule above. */
     current(): CommandStatus | null
@@ -55,10 +59,13 @@ function withoutCorrection(status: CommandStatus): CommandStatus {
 
 export function createCommandLedger(deps: { now: () => number }): CommandLedger {
     const entries = new Map<string, LedgerEntry>()
-    let currentId: string | null = null
+    /** Outcomes remi has not seen yet, oldest first. `current()` reads the head, `markPublished` pops it. */
+    const unpublishedTerminals: string[] = []
+    /** What the last published state carried, so the slot does not go empty once the queue drains. */
+    let lastPublishedId: string | null = null
     const iso = () => new Date(deps.now()).toISOString()
 
-    /** The most recently recorded command that has not finished. Insertion order, newest first. */
+    /** The command that has not finished, newest first: the loop keeps the last match in insertion order. */
     const liveEntry = (): LedgerEntry | undefined => {
         let found: LedgerEntry | undefined
         for (const entry of entries.values()) {
@@ -67,29 +74,26 @@ export function createCommandLedger(deps: { now: () => number }): CommandLedger 
         return found
     }
 
-    /** The hold half of the single-slot rule: a rejection remi has not seen yet cannot be displaced. */
-    const holdsUnpublishedRejection = (): boolean => {
-        const holder = currentId === null ? undefined : entries.get(currentId)
-        return holder !== undefined && holder.status.state === 'rejected' && !holder.publishedOnce
-    }
-
     return {
         get: (id) => entries.get(id),
         accept(id, type, correction) {
+            const known = entries.get(id)
+            if (known) return known.status
             const status: CommandStatus = { id, state: 'accepted', accepted_at: iso() }
             if (correction) {
                 status.corrected_position = correction.position
                 status.correction_distance_m = correction.distanceM
             }
             entries.set(id, { status, type, publishedOnce: false })
-            if (!holdsUnpublishedRejection()) currentId = id
             return status
         },
         reject(id, type, code, message, correctionDistanceM) {
+            const known = entries.get(id)
+            if (known) return known.status
             const status: CommandStatus = { id, state: 'rejected', rejected_at: iso(), error: { code, message } }
             if (code === 'DESTINATION_UNREACHABLE' && correctionDistanceM !== undefined) status.correction_distance_m = correctionDistanceM
             entries.set(id, { status, type, publishedOnce: false })
-            if (!holdsUnpublishedRejection()) currentId = id
+            unpublishedTerminals.push(id)
             return status
         },
         markExecuting(id) {
@@ -98,15 +102,15 @@ export function createCommandLedger(deps: { now: () => number }): CommandLedger 
             entry.status = { ...entry.status, state: 'executing', updated_at: iso() }
             return true
         },
-        complete(id, terminal, error) {
+        complete(id: string, terminal: 'succeeded' | 'failed', error?: { code: string; message: string }): boolean {
             const entry = entries.get(id)
             if (!entry || TERMINAL.has(entry.status.state)) return false
+            // The overloads above already refuse this at compile time; the runtime check is for the
+            // JavaScript caller, because a failed status without an error fails commandStatusSchema
+            // and would be dropped on the way out instead of telling remi how the command ended.
+            if (terminal === 'failed' && !error) return false
             entry.status = withoutCorrection({ ...entry.status, state: terminal, updated_at: iso(), ...(error ? { error } : {}) })
-            // A command that finishes while a rejection is sitting in the slot must still be visible.
-            if (currentId !== id) {
-                const holder = currentId === null ? undefined : entries.get(currentId)
-                if (!holder || (holder.status.state === 'rejected' && holder.publishedOnce)) currentId = id
-            }
+            unpublishedTerminals.push(id)
             return true
         },
         replace(previousId) {
@@ -115,20 +119,23 @@ export function createCommandLedger(deps: { now: () => number }): CommandLedger 
             const error = { code: 'REPLACED', message: 'replaced by a newer navigate_to' }
             entry.status = withoutCorrection({ ...entry.status, state: 'failed', updated_at: iso(), error })
             entry.internalCode = 'REPLACED'
+            // Deliberately not queued: REPLACED is not a contract state and must never reach remi.
+            // remi itself asked for the newer navigation, so it is not waiting for this outcome.
         },
         current() {
-            if (!currentId) return null
-            const entry = entries.get(currentId)
-            if (!entry) return null
-            if (entry.status.state === 'rejected' && entry.publishedOnce) {
-                const live = liveEntry()
-                if (live) return live.status
-            }
-            return entry.status
+            const head = unpublishedTerminals[0]
+            if (head !== undefined) return entries.get(head)?.status ?? null
+            const live = liveEntry()
+            if (live) return live.status
+            const last = lastPublishedId === null ? undefined : entries.get(lastPublishedId)
+            return last?.status ?? null
         },
         markPublished(id) {
             const entry = entries.get(id)
-            if (entry) entry.publishedOnce = true
+            if (!entry) return
+            entry.publishedOnce = true
+            lastPublishedId = id
+            if (unpublishedTerminals[0] === id) unpublishedTerminals.shift()
         },
         activeNavigation() {
             for (const [id, entry] of entries) {

@@ -126,6 +126,111 @@ describe('command ledger', () => {
         assert.equal(ledger.current()?.id, 'J/far')
         assert.equal(ledger.current()?.state, 'rejected')
     })
+    it('every terminal reaches the slot, oldest first, and then the slot goes back to the live command', () => {
+        let now = T0
+        const ledger = createCommandLedger({ now: () => now })
+        ledger.accept('J/a', 'navigate_to')
+        ledger.accept('J/a/door-open', 'set_door')
+        now += 1_000
+        ledger.complete('J/a/door-open', 'failed', { code: 'DOOR_STALLED', message: 'the door did not open' })
+        now += 1_000
+        ledger.reject('J/c', 'navigate_to', 'BOT_BUSY', 'busy with J/a')
+
+        // FIFO: the door failed first, so that is the outcome remi is told about first.
+        assert.equal(ledger.current()?.id, 'J/a/door-open')
+        assert.equal(ledger.current()?.state, 'failed')
+        ledger.markPublished('J/a/door-open')
+        assert.equal(ledger.current()?.id, 'J/c')
+        assert.equal(ledger.current()?.state, 'rejected')
+        ledger.markPublished('J/c')
+
+        // Queue drained: the navigation that is still running gets the slot back, so it never starves.
+        assert.equal(ledger.current()?.id, 'J/a')
+        assert.equal(ledger.current()?.state, 'accepted')
+        assert.equal(ledger.activeNavigation(), 'J/a')
+    })
+    it('a terminal that has already been published never returns to the slot', () => {
+        let now = T0
+        const ledger = createCommandLedger({ now: () => now })
+        ledger.accept('J/a', 'navigate_to')
+        ledger.accept('J/a/door-open', 'set_door')
+        now += 1_000
+        ledger.complete('J/a/door-open', 'succeeded')
+        assert.equal(ledger.current()?.id, 'J/a/door-open')
+
+        ledger.markPublished('J/a/door-open')
+        assert.equal(ledger.current()?.id, 'J/a', 'the outcome was shown once and the slot moved on')
+
+        // Publishing again, or publishing the live command, does not bring the outcome back.
+        ledger.markPublished('J/a/door-open')
+        assert.equal(ledger.current()?.id, 'J/a')
+        ledger.markPublished('J/a')
+        assert.equal(ledger.current()?.id, 'J/a')
+    })
+    it('complete refuses a failed terminal with no error, which the contract would not accept', () => {
+        const ledger = createCommandLedger({ now: () => T0 })
+        ledger.accept('J/pickup', 'navigate_to')
+        ledger.markExecuting('J/pickup')
+        // The overloads refuse this call at compile time; the cast is the JavaScript caller the
+        // runtime guard exists for. commandStatusSchema requires `error` when state is failed.
+        const loose = ledger.complete as (
+            id: string,
+            terminal: 'succeeded' | 'failed',
+            error?: { code: string; message: string },
+        ) => boolean
+        assert.equal(loose('J/pickup', 'failed'), false)
+        assert.equal(ledger.get('J/pickup')?.status.state, 'executing', 'the refused completion moved nothing')
+        assert.equal(ledger.current()?.id, 'J/pickup')
+        assert.equal(ledger.current()?.state, 'executing')
+    })
+    it('the same id sent three times is recorded once and a resend never moves the status', () => {
+        let now = T0
+        const ledger = createCommandLedger({ now: () => now })
+        const first = ledger.accept('J/pickup', 'navigate_to')
+        const entry = ledger.get('J/pickup')
+        now += 1_000
+        const second = ledger.accept('J/pickup', 'navigate_to')
+        now += 1_000
+        const third = ledger.accept('J/pickup', 'navigate_to')
+        assert.deepEqual(second, first)
+        assert.deepEqual(third, first)
+        assert.equal(third.accepted_at, iso(T0), 'a resend does not restamp the command')
+        assert.equal(ledger.get('J/pickup'), entry, 'one entry, not three')
+
+        // A resend that arrives after the command finished answers with the terminal, never behind it.
+        ledger.markExecuting('J/pickup')
+        now += 1_000
+        ledger.complete('J/pickup', 'succeeded')
+        now += 1_000
+        assert.equal(ledger.accept('J/pickup', 'navigate_to').state, 'succeeded')
+        assert.equal(ledger.current()?.state, 'succeeded')
+    })
+    it('a resend of a rejected id does not queue the rejection twice', () => {
+        const ledger = createCommandLedger({ now: () => T0 })
+        const first = ledger.reject('J/far', 'navigate_to', 'DESTINATION_UNREACHABLE', '340 m away', 340)
+        assert.deepEqual(ledger.reject('J/far', 'navigate_to', 'DESTINATION_UNREACHABLE', '340 m away', 340), first)
+        ledger.accept('J/near', 'navigate_to')
+        assert.equal(ledger.current()?.id, 'J/far')
+        ledger.markPublished('J/far')
+        assert.equal(ledger.current()?.id, 'J/near', 'one rejection, published once, and the slot moves on')
+    })
+    it('markExecuting on an executing command, and replace on a terminal or an unknown id, do nothing', () => {
+        let now = T0
+        const ledger = createCommandLedger({ now: () => now })
+        ledger.accept('J/a', 'navigate_to')
+        assert.equal(ledger.markExecuting('J/a'), true)
+        now += 1_000
+        assert.equal(ledger.markExecuting('J/a'), false, 'already executing')
+        assert.equal(ledger.get('J/a')?.status.updated_at, iso(T0), 'the refused transition did not restamp it')
+
+        ledger.complete('J/a', 'succeeded')
+        ledger.replace('J/a')
+        assert.equal(ledger.get('J/a')?.status.state, 'succeeded', 'a terminal is not replaced')
+        assert.equal(ledger.get('J/a')?.internalCode, undefined)
+
+        ledger.replace('nope')
+        assert.equal(ledger.get('nope'), undefined)
+    })
     it('markPublished on anything that is not the current rejection changes nothing', () => {
         const ledger = createCommandLedger({ now: () => T0 })
         ledger.accept('J/a', 'navigate_to')

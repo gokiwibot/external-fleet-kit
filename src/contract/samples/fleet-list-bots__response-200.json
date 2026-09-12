@@ -1,0 +1,33 @@
+{
+  "data": [
+    {
+      "bot_id": "ACME-0142",
+      "location_id": "V1StGXR8Z5jdHi6BmyT2q",
+      "assignable": true,
+      "blocked_by": [],
+      "state_age_ms": 1840,
+      "current_job_id": null
+    },
+    {
+      "bot_id": "ACME-0143",
+      "location_id": "V1StGXR8Z5jdHi6BmyT2q",
+      "assignable": false,
+      "blocked_by": [
+        "battery_below_minimum"
+      ],
+      "state_age_ms": 2100,
+      "current_job_id": "GW-5901"
+    },
+    {
+      "bot_id": "ACME-0144",
+      "location_id": null,
+      "assignable": false,
+      "blocked_by": [
+        "no_location"
+      ],
+      "state_age_ms": 950,
+      "current_job_id": null
+    }
+  ],
+  "next_cursor": null
+}

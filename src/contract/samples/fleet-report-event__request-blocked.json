@@ -1,0 +1,9 @@
+{
+  "bot_id": "ACME-0142",
+  "type": "blocked",
+  "occurred_at": "2026-09-01T14:31:44.000Z",
+  "detail": {
+    "reason": "obstruction",
+    "message": "Sidewalk blocked, waiting for operator"
+  }
+}

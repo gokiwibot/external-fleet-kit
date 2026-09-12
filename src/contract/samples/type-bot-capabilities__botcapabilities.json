@@ -1,0 +1,8 @@
+{
+  "has_door": true,
+  "supported_commands": [
+    "navigate_to",
+    "cancel_navigation",
+    "set_door"
+  ]
+}

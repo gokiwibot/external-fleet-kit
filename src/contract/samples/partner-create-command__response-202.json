@@ -1,0 +1,10 @@
+{
+  "id": "GW-5867/pickup",
+  "state": "accepted",
+  "accepted_at": "2026-09-01T14:22:31.220Z",
+  "corrected_position": {
+    "lat": 33.9703,
+    "lng": -118.4146
+  },
+  "correction_distance_m": 28.9
+}

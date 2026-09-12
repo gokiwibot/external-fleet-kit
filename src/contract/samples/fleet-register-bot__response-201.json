@@ -1,0 +1,14 @@
+{
+  "data": {
+    "bot_id": "ACME-0142",
+    "namespace": "acme",
+    "location_id": null,
+    "manual_close_door": true,
+    "commercial_name": "Acme 0142",
+    "tags": [
+      "acme-fleet",
+      "lockable-door"
+    ],
+    "retired_at": null
+  }
+}

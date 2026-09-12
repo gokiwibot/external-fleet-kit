@@ -1,0 +1,8 @@
+{
+  "id": "GW-5867/pickup/door-open",
+  "type": "set_door",
+  "params": {
+    "state": "open"
+  },
+  "issued_at": "2026-09-01T14:24:02.000Z"
+}

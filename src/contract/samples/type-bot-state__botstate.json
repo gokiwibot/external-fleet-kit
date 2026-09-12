@@ -1,0 +1,24 @@
+{
+  "bot_id": "ACME-0142",
+  "seq": 88214,
+  "timestamp": "2026-09-01T14:22:31.000Z",
+  "available": false,
+  "connected": true,
+  "position": {
+    "lat": 33.9701,
+    "lng": -118.4148
+  },
+  "battery": {
+    "percentage": 74
+  },
+  "motion": {
+    "speed_mps": 1.4
+  },
+  "door": "closed",
+  "current_command": {
+    "id": "GW-5867/pickup",
+    "state": "executing",
+    "accepted_at": "2026-09-01T14:22:31.220Z",
+    "updated_at": "2026-09-01T14:26:10.000Z"
+  }
+}

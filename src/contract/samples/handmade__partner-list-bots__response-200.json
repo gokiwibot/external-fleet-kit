@@ -1,0 +1,52 @@
+{
+  "bots": [
+    {
+      "bot_id": "ACME-0142",
+      "seq": 88214,
+      "timestamp": "2026-09-01T14:22:31.000Z",
+      "available": true,
+      "connected": true,
+      "position": {
+        "lat": 33.9701,
+        "lng": -118.4148
+      },
+      "battery": {
+        "percentage": 74
+      },
+      "motion": {
+        "speed_mps": 0
+      },
+      "door": "closed",
+      "current_command": {
+        "id": "GW-5867/pickup",
+        "state": "succeeded",
+        "accepted_at": "2026-09-01T14:18:02.100Z",
+        "updated_at": "2026-09-01T14:22:29.400Z"
+      }
+    },
+    {
+      "bot_id": "ACME-0143",
+      "seq": 51002,
+      "timestamp": "2026-09-01T14:22:30.000Z",
+      "available": false,
+      "connected": true,
+      "position": {
+        "lat": 33.9688,
+        "lng": -118.4171
+      },
+      "battery": {
+        "percentage": 31
+      },
+      "motion": {
+        "speed_mps": 1.4
+      },
+      "door": "closed",
+      "current_command": {
+        "id": "GW-5901/dropoff",
+        "state": "executing",
+        "accepted_at": "2026-09-01T14:21:55.000Z",
+        "updated_at": "2026-09-01T14:22:04.700Z"
+      }
+    }
+  ]
+}

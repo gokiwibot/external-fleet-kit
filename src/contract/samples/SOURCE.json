@@ -1,0 +1,42 @@
+{
+  "commit": "pending-N2",
+  "sha256": "8770143a386ca0f51f04eb6a13a72302dc72eb3534b09d1b02502972edb28a97",
+  "extractedAt": "2026-09-12T22:49:14.370Z",
+  "files": [
+    "fleet-list-bots__response-200",
+    "fleet-push-state__response-202",
+    "fleet-register-bot__request",
+    "fleet-register-bot__response-201",
+    "fleet-report-event__request-arrived",
+    "fleet-report-event__request-blocked",
+    "fleet-report-event__response-202",
+    "fleet-retire-bot__response-200",
+    "fleet-update-bot__request",
+    "fleet-update-config__request",
+    "partner-create-command__request-cancel-navigation",
+    "partner-create-command__request-navigate-to",
+    "partner-create-command__request-set-door-open",
+    "partner-create-command__response-202",
+    "partner-validate-destination__request",
+    "partner-validate-destination__response-200-not-reachable",
+    "partner-validate-destination__response-200-reachable",
+    "type-bot-battery__botbattery",
+    "type-bot-capabilities__botcapabilities",
+    "type-bot-command__botcommand-navigate-to",
+    "type-bot-event__botevent-arrived",
+    "type-bot-position__botposition",
+    "type-bot-state__botstate",
+    "type-command-status__commandstatus",
+    "type-fleet-bot-response__fleetbot-response",
+    "type-fleet-bot__fleetbot",
+    "type-fleet-config__fleetconfig-response"
+  ],
+  "skipped": [
+    "partner-get-command__response-200",
+    "partner-capabilities__response-200",
+    "fleet-get-config__response-200",
+    "fleet-update-config__response-200",
+    "fleet-update-bot__response-200",
+    "fleet-push-state__request"
+  ]
+}

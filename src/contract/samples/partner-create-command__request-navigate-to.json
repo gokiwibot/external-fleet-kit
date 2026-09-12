@@ -1,0 +1,9 @@
+{
+  "id": "GW-5867/pickup",
+  "type": "navigate_to",
+  "params": {
+    "lat": 33.9701,
+    "lng": -118.4148
+  },
+  "issued_at": "2026-09-01T14:22:31.000Z"
+}

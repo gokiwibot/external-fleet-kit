@@ -1,0 +1,5 @@
+{
+  "transport": "http",
+  "base_url": "https://fleet.acme-robotics.com/v1",
+  "token": "2f8c1e0b7a4d4e9f9c3b6a1d8e7f0c2b5a4d3e2f1c0b9a8d7e6f5c4b3a2d1e0f"
+}

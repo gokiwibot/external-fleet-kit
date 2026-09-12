@@ -1,0 +1,11 @@
+{
+  "namespace": "acme",
+  "bot_id_prefix": "ACME-",
+  "transport": "http",
+  "base_url": "https://fleet.acme-robotics.com/v1",
+  "token_set": true,
+  "poll_interval_active_ms": 2000,
+  "poll_interval_idle_ms": 15000,
+  "max_bots": 40,
+  "contract_version": "2026-09"
+}

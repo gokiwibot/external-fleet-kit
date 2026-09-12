@@ -1,0 +1,8 @@
+{
+  "type": "about:blank",
+  "title": "Unprocessable Entity",
+  "status": 422,
+  "code": "DESTINATION_UNREACHABLE",
+  "detail": "340 m from the nearest drivable segment",
+  "correction_distance_m": 340
+}

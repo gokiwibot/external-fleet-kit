@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -40,6 +40,16 @@ describe('lockfile', () => {
         assert.ok('held' in second)
         // The file still names the first pid: the loser wrote nothing.
         assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { pid: number }).pid, 2000)
+    })
+    it('release() leaves behind a lock that is no longer ours', () => {
+        const path = fresh()
+        const first = acquireLock(path, { pid: 3000, now: () => 1_000, isAlive: () => true })
+        assert.ok('release' in first)
+        // A second instance decided our pid was dead and took the lock over.
+        writeFileSync(path, `${JSON.stringify({ pid: 3001, since: 2_000 })}\n`)
+        first.release()
+        assert.equal(existsSync(path), true, 'a foreign lock survives our release')
+        assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { pid: number }).pid, 3001)
     })
     it('an unreadable lock is stale and is taken over', () => {
         const path = fresh()

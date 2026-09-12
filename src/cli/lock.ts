@@ -6,6 +6,10 @@
  * `existsSync` followed by `writeFileSync` is a check-then-act: two `efk start` launched in the same
  * second both see no file and both write, and the second silently overwrites the first — exactly the
  * two-instance case the lock exists to stop. `wx` makes the creation itself the decision point.
+ *
+ * Releasing is the mirror image: a holder removes ONLY the lock it wrote. If our lock was broken and
+ * taken over (our pid looked dead to the newcomer), the file on disk is now someone else's, and
+ * unlinking it would let a third instance in alongside the second — the two-writer case again.
  */
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
@@ -22,35 +26,44 @@ export function processIsAlive(pid: number): boolean {
 }
 
 export function acquireLock(path: string, deps: LockDeps): LockResult {
-    const holder = () => {
-        const release = () => {
-            try {
-                unlinkSync(path)
-            } catch {
-                // already gone
-            }
-        }
-        return { release }
-    }
-
-    const tryCreate = (): boolean => {
+    /** The current holder, or null when the file is missing, unreadable or not a lock we understand. */
+    const readHolder = (): { pid: number; since: number } | null => {
         try {
-            writeFileSync(path, `${JSON.stringify({ pid: deps.pid, since: deps.now() })}\n`, { flag: 'wx' })
-            return true
+            const parsed = JSON.parse(readFileSync(path, 'utf8')) as { pid?: unknown; since?: unknown }
+            if (typeof parsed?.pid !== 'number' || typeof parsed?.since !== 'number') return null
+            return { pid: parsed.pid, since: parsed.since }
         } catch {
-            return false
+            return null // unreadable lock: treat as stale
         }
     }
 
-    if (tryCreate()) return holder()
+    /** Creates the lock or returns null if someone else already holds it. `wx` is the decision point. */
+    const create = (): { release(): void } | null => {
+        const since = deps.now()
+        try {
+            writeFileSync(path, `${JSON.stringify({ pid: deps.pid, since })}\n`, { flag: 'wx' })
+        } catch {
+            return null
+        }
+        return {
+            release() {
+                const current = readHolder()
+                // Not ours any more: leave it. Removing a foreign lock is how a third writer gets in.
+                if (current === null || current.pid !== deps.pid || current.since !== since) return
+                try {
+                    unlinkSync(path)
+                } catch {
+                    // already gone
+                }
+            },
+        }
+    }
+
+    const mine = create()
+    if (mine) return mine
 
     // The file exists. Whoever wrote it either is alive (we lose) or is not (we steal it).
-    let held: { pid: number; since: number } | null = null
-    try {
-        held = JSON.parse(readFileSync(path, 'utf8')) as { pid: number; since: number }
-    } catch {
-        held = null // unreadable lock: treat as stale
-    }
+    const held = readHolder()
     if (held && deps.isAlive(held.pid)) return { held }
 
     try {
@@ -58,12 +71,8 @@ export function acquireLock(path: string, deps: LockDeps): LockResult {
     } catch {
         // someone else removed it first
     }
-    if (tryCreate()) return holder()
+    const stolen = create()
+    if (stolen) return stolen
     // Lost a race against a third process that grabbed it between our unlink and our create.
-    try {
-        const winner = JSON.parse(readFileSync(path, 'utf8')) as { pid: number; since: number }
-        return { held: winner }
-    } catch {
-        return { held: { pid: -1, since: deps.now() } }
-    }
+    return { held: readHolder() ?? { pid: -1, since: deps.now() } }
 }

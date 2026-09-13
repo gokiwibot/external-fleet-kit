@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { createCommandLedger } from './command-ledger'
+import { createCommandLedger, MAX_UNPUBLISHED_TERMINALS } from './command-ledger'
 
 const T0 = 1_800_000_000_000
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -238,5 +238,19 @@ describe('command ledger', () => {
         assert.equal(ledger.current()?.id, 'J/a')
         ledger.markPublished('nope')
         assert.equal(ledger.current()?.id, 'J/a')
+    })
+    it('bounds the queue of unpublished outcomes at MAX_UNPUBLISHED_TERMINALS by default, oldest out first', () => {
+        const dropped: Array<{ id: string; pending: number }> = []
+        const ledger = createCommandLedger({ now: () => T0, onTerminalDropped: (id, pending) => dropped.push({ id, pending }) })
+        // A bot that cannot publish for hours while commands keep arriving: the outcomes must not
+        // pile up without end, and the ones remi is still waiting for are the newest.
+        for (let i = 0; i < MAX_UNPUBLISHED_TERMINALS + 2; i += 1) ledger.reject(`J/${i}`, 'navigate_to', 'BOT_BUSY', 'busy')
+        assert.deepEqual(dropped, [
+            { id: 'J/0', pending: MAX_UNPUBLISHED_TERMINALS },
+            { id: 'J/1', pending: MAX_UNPUBLISHED_TERMINALS },
+        ])
+        assert.equal(ledger.current()?.id, 'J/2', 'the head is the oldest outcome that survived')
+        for (let i = 2; i < MAX_UNPUBLISHED_TERMINALS + 1; i += 1) ledger.markPublished(`J/${i}`)
+        assert.equal(ledger.current()?.id, `J/${MAX_UNPUBLISHED_TERMINALS + 1}`, 'and the newest is still there to be published')
     })
 })

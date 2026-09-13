@@ -81,6 +81,17 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
     let config: FleetConfigResponse | null = null
     let timer: ReturnType<typeof setInterval> | null = null
     let ticking = false
+    /**
+     * The tick that is running RIGHT NOW, so `stop()` can await it before flushing the counters.
+     *
+     * ORDERLY SHUTDOWN. `stop()` used to clear the interval and walk straight on to `seq.flush()`,
+     * which does not stop a tick that had already started: a QoS 1 publish still waiting for its
+     * PUBACK, or an HTTP batch still in `flushTick`, confirms a moment later and consumes a `seq`
+     * AFTER the counters have been written to disk. That increment never reaches `.efk-state.json`,
+     * so the next run hands that bot a number it has already used and remi — which discards any
+     * state whose `seq` is not above the last one it stored — drops the state it is sent.
+     */
+    let inFlight: Promise<void> | null = null
     const tickMs = deps.tickMs ?? TICK_MS
 
     const buildCapabilities = (): FleetCapabilities => {
@@ -268,12 +279,28 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
             for (const runtime of runtimes) await runtime.start()
             await transport.start(runtimes)
             await transport.publishCapabilities(buildCapabilities())
-            if (tickMs > 0) timer = setInterval(() => void tick(), tickMs)
+            if (tickMs > 0)
+                timer = setInterval(() => {
+                    const run = tick()
+                    inFlight = run
+                    // `then(clear, clear)` and not `finally`: it settles the promise either way, so a
+                    // tick that rejects cannot become an unhandled rejection — which `void tick()`
+                    // left open — and cannot strand `inFlight` on a promise that never clears.
+                    const clear = () => {
+                        if (inFlight === run) inFlight = null
+                    }
+                    run.then(clear, clear)
+                }, tickMs)
             return { ok: true, roster: runtimes.map((r) => r.botId) }
         },
         async stop() {
             if (timer) clearInterval(timer)
             timer = null
+            // BEFORE anything else, and above all before `seq.flush()` below: see `inFlight`. The
+            // rejection is swallowed because this is the shutdown path and the tick already reported
+            // its own failures on the bus; what matters here is that it has FINISHED.
+            await inFlight?.catch(() => {})
+            inFlight = null
             for (const off of subscriptions.splice(0)) off()
             for (const runtime of runtimes) await runtime.stop()
             await transport?.stop()

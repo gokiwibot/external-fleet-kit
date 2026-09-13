@@ -12,7 +12,7 @@ import { MAX_UNPUBLISHED_TERMINALS } from './command-ledger'
 import { createEventBus, type EventBus } from './events'
 import { FakeClock, FakeDriver } from './fakes'
 import { createFleetManager } from './fleet-manager'
-import { createSeq } from './seq'
+import { createSeq, type Seq } from './seq'
 import { createStateStore } from './state-store'
 
 // Every temp directory is remembered so the run leaves nothing behind, in the repo or in /tmp.
@@ -326,5 +326,83 @@ describe('fleet manager', () => {
         driver.snap = { ...driver.snap, position: { lat: 33.97, lng: -118.41 } }
         await transport.handler('ACME-0001', live('J/c'))
         assert.equal(runtime.currentCommand()?.id, 'J/b', 'the outcome remi never received still owns the slot, ahead of the live command')
+    })
+})
+
+/**
+ * ORDERLY SHUTDOWN (cross-task debt, Task 16). `stop()` used to clear the interval and walk on to
+ * `seq.flush()` without waiting for a tick that had already started. A QoS 1 publish still waiting
+ * for its PUBACK — or an HTTP batch still inside `flushTick` — confirms a moment later and consumes
+ * a `seq` AFTER the counters have been written, so that increment never reaches `.efk-state.json`.
+ * The next run then hands that bot a number it has already used, and remi discards every state it
+ * is sent, silently, until the counter climbs back past where it was.
+ */
+describe('fleet manager shutdown', () => {
+    it('waits for the publish already in flight before flushing the seq counters', async () => {
+        const order: string[] = []
+        let counter = 0
+        const seq: Seq = {
+            next: () => {
+                order.push('seq.next')
+                counter += 1
+                return counter
+            },
+            peek: () => counter,
+            flush: () => order.push('seq.flush'),
+        }
+
+        let entered = 0
+        // Definite assignment: the executor runs synchronously, but TS's control flow cannot see
+        // that and would narrow a `| null` binding to `never` at the call below.
+        let release!: () => void
+        const inFlight = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        const transport: Transport = {
+            kind: 'mqtt',
+            start: async () => {},
+            stop: async () => {},
+            publishState: async () => {
+                entered += 1
+                await inFlight
+                return true
+            },
+            publishEvent: async () => true,
+            publishCapabilities: async () => {},
+            flushTick: async () => {},
+            onCommand: () => {},
+        }
+
+        const clock = new FakeClock()
+        const manager = createFleetManager({
+            remi: fakeRemi({ listFleetBots: async () => ({ ok: true, data: [mirror('ACME-0001')] }) }),
+            transportFor: () => transport,
+            driverFor: (botId) => new FakeDriver(botId),
+            fleet: { supportsCommandInterrupt: true },
+            env: { transport: 'mqtt' },
+            bus: createEventBus(),
+            seq,
+            now: clock.now,
+            tickMs: 5,
+        })
+        await manager.start()
+
+        // Bounded: node's default test timeout is Infinity, so a regression here must fail, not hang.
+        const deadline = Date.now() + 5_000
+        while (entered === 0) {
+            if (Date.now() > deadline) throw new Error('no tick ever reached the transport')
+            await new Promise((resolve) => setTimeout(resolve, 2))
+        }
+        assert.deepEqual(order, [], 'nothing consumed or flushed while the publish is still in flight')
+
+        const stopping = manager.stop()
+        // Let `stop()` get as far as it can with the publish still pending. If it did not await the
+        // tick, this is where it would flush.
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        assert.deepEqual(order, [], 'stop() must not have flushed anything yet')
+
+        release()
+        await stopping
+        assert.deepEqual(order, ['seq.next', 'seq.flush'], 'the counter is consumed first, and the flush that follows carries it to disk')
     })
 })

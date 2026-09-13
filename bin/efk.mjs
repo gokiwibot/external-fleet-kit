@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // Runs the TypeScript CLI through tsx so a clone needs no build step.
-// The second argument to register() is the parent URL tsx resolves its own hooks from; it must be
-// THIS file's URL, not the process working directory: `efk` is run from the partner's project root,
-// and pathToFileURL('./') would make the loader resolve against that directory instead of the kit.
-import { register } from 'node:module'
+//
+// `tsx/esm/api`'s own `register()`, NOT `node:module`'s `register('tsx/esm', …)`: tsx 4 refuses the
+// latter outright ("tsx must be loaded with --import instead of --loader", because that path goes
+// through the loader API node deprecated in 20.6). It is also what settles the resolution question
+// the old comment worried about — `tsx/esm/api` is resolved as an ordinary import relative to THIS
+// file, so it is found in the kit's node_modules no matter which directory `efk` was run from, and
+// `../src/cli/index.ts` below is likewise relative to the kit rather than to process.cwd().
+import { register } from 'tsx/esm/api'
 
-register('tsx/esm', import.meta.url)
+register()
 await import('../src/cli/index.ts')

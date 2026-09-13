@@ -364,7 +364,7 @@ describe('simulated() factory', () => {
         assert.ok(listScenarios().includes('boolean-door'))
     })
     it('keeps the simulator surface and still fits where a bare DriverFactory is expected', () => {
-        const factory = simulated({ scenario: 'default', now: () => T0, random: fixed(0.5) })
+        const factory = simulated({ scenario: 'default', now: () => T0, randomFor: () => fixed(0.5) })
         // The compile-time half of the claim: `DriverFactory` is generic in the driver it builds
         // (one declaration, ruling R12), so the narrow factory assigns to the bare one — the return
         // type is covariant — and the CLI/TUI get `tick()` and the toggles with no cast and no guard.
@@ -379,6 +379,69 @@ describe('simulated() factory', () => {
         const factory = simulated({ scenario: 'low-battery' })
         assert.deepEqual(factory.auditRoster?.(['ACME-0001', 'ACME-0002', 'ACME-0003']), [])
         assert.deepEqual(factory.auditRoster?.(['GW-0001']), ['ACME-0001', 'ACME-0002', 'ACME-0003'])
+    })
+    /**
+     * Cross-task debt: ONE STREAM PER BOT, seeded from the bot id. A single shared `random` couples
+     * every bot's noise to every other bot's command timing — the draws per tick depend on each
+     * bot's own state, so sorting the roster does not fix it. The trace below is produced twice from
+     * the same factory options: once with ACME-0001 built FIRST and its neighbour idle, once with it
+     * built SECOND behind a neighbour that is driving and drawing. Same bot, same seed, same trace.
+     */
+    it("seeds each bot from its id: one bot's trace survives roster order and its neighbours' activity", async () => {
+        const target = { lat: 0.0012, lng: 0.0012 }
+        const trace = async (order: readonly string[], busyNeighbour: boolean) => {
+            const factory = simulated({ scenario: 'default', now: () => T0 })
+            const built = new Map(order.map((botId) => [botId, factory(botId, { origin })]))
+            const subject = built.get('ACME-0001')
+            const neighbour = built.get('ACME-0002')
+            if (!subject || !neighbour) throw new Error('both bots must be built')
+            for (const d of built.values()) await d.start({ now: () => T0, log: () => {} })
+            const positions = [subject.snapshot().position]
+            await subject.navigateTo({ id: 'J/pickup', target })
+            if (busyNeighbour) await neighbour.navigateTo({ id: 'J/dropoff', target })
+            for (let i = 1; i <= 20; i += 1) {
+                // The neighbour ticks FIRST in one world and second in the other: with a shared
+                // stream that alone would shift every draw the subject makes.
+                if (busyNeighbour) neighbour.tick(T0 + i * 250)
+                subject.tick(T0 + i * 250)
+                if (!busyNeighbour) neighbour.tick(T0 + i * 250)
+                positions.push(subject.snapshot().position)
+            }
+            return positions
+        }
+        const alone = await trace(['ACME-0001', 'ACME-0002'], false)
+        const crowded = await trace(['ACME-0002', 'ACME-0001'], true)
+        assert.notDeepEqual(alone[0], alone[20], 'the bot has to actually move, or the claim is empty')
+        assert.deepEqual(alone, crowded)
+        // And two DIFFERENT bots do not share a stream: same scenario, different scatter.
+        const factory = simulated({ scenario: 'default', now: () => T0 })
+        assert.notDeepEqual(factory('ACME-0001', { origin }).snapshot().position, factory('ACME-0002', { origin }).snapshot().position)
+        // The seed is what makes it reproducible rather than merely uncoupled: same seed, same bot,
+        // same answer; a different seed moves the whole fleet somewhere else.
+        assert.deepEqual(
+            factory('ACME-0001', { origin }).snapshot().position,
+            simulated({ scenario: 'default', now: () => T0 })('ACME-0001', { origin }).snapshot().position,
+        )
+        const reseeded = simulated({ scenario: 'default', now: () => T0, seed: 'other-fleet' })
+        assert.notDeepEqual(factory('ACME-0001', { origin }).snapshot().position, reseeded('ACME-0001', { origin }).snapshot().position)
+    })
+    /**
+     * Cross-task debt: ONE CLOCK. The door used to run on `options.now()` while the wheels ran on the
+     * `nowMs` of `tick()`. With a `now` that never advances — the shape of any caller whose loop time
+     * and clock drifted apart — the door's transition could never end and `set_door` hung for ever.
+     */
+    it('door and motion share the tick clock, not two clocks a caller has to keep equal', async () => {
+        const factory = simulated({ scenario: 'default', now: () => T0 })
+        const d = factory('ACME-0001', { origin })
+        await d.start({ now: () => T0, log: () => {} })
+        const states: string[] = []
+        d.on('commandState', (id, state) => states.push(`${id}:${state}`))
+        d.tick(T0)
+        await d.setDoor({ id: 'J/door', state: 'open' })
+        // `now` is frozen at T0 for ever; only the tick advances.
+        for (let i = 1; i <= 20; i += 1) d.tick(T0 + i * 250)
+        assert.equal(d.snapshot().door, 'opened')
+        assert.deepEqual(states, ['J/door:succeeded'])
     })
 })
 

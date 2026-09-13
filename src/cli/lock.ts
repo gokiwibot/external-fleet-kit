@@ -14,7 +14,14 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
 export type LockDeps = { pid: number; now: () => number; isAlive: (pid: number) => boolean }
-export type LockResult = { release(): void } | { held: { pid: number; since: number } }
+/**
+ * Three outcomes, not two. `contended` is the one that used to hide: when we lose a race for a lock
+ * whose file we cannot read, there is no holder to name — the old code answered `{ held: { pid: -1,
+ * since: <now> } }`, a pid that does not exist and the CURRENT time rather than the holder's, which
+ * a CLI would print at a partner as "already running (pid -1) since just now". A caller has to render
+ * this case as what it is: somebody else has the lock and we could not learn who.
+ */
+export type LockResult = { release(): void } | { held: { pid: number; since: number } } | { contended: true }
 
 export function processIsAlive(pid: number): boolean {
     try {
@@ -73,6 +80,9 @@ export function acquireLock(path: string, deps: LockDeps): LockResult {
     }
     const stolen = create()
     if (stolen) return stolen
-    // Lost a race against a third process that grabbed it between our unlink and our create.
-    return { held: readHolder() ?? { pid: -1, since: deps.now() } }
+    // Lost a race against a third process that grabbed it between our unlink and our create, or the
+    // path is not a lock we can create or read at all (a directory in its place). Name the holder
+    // when the file tells us who it is; say `contended` rather than invent one when it does not.
+    const winner = readHolder()
+    return winner ? { held: winner } : { contended: true }
 }

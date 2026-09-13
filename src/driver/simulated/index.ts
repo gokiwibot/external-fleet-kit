@@ -51,7 +51,18 @@ type Navigation = {
 }
 
 export function createSimulatedDriver(options: SimulatedDriverOptions): SimulatedRobotDriver {
-    const { botId, scenario, now, random } = options
+    const { botId, scenario, random } = options
+    /**
+     * ONE CLOCK, not two (controller ruling, Task 15). The driver used to read `options.now()` for
+     * the door, the link and the battery while motion advanced on the `nowMs` handed to `tick()`:
+     * two clocks that only the tests kept equal by hand, so a caller whose loop time drifted from
+     * its `now` left the door living in a different time from the wheels — the door would finish
+     * early, late, or (with a frozen `now`) never. `tick()` is the authoritative time source once
+     * the simulation is running; `options.now()` only answers before the first tick, which is all
+     * that construction and `start()` need.
+     */
+    let tickNowMs: number | null = null
+    const now = () => tickNowMs ?? options.now()
     const handlers = new Map<keyof DriverEvents, Set<(...args: never[]) => void>>()
     const emit = <K extends keyof DriverEvents>(event: K, ...args: Parameters<DriverEvents[K]>) => {
         for (const handler of handlers.get(event) ?? []) (handler as (...a: Parameters<DriverEvents[K]>) => void)(...args)
@@ -167,6 +178,9 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
             return () => set.delete(handler as (...args: never[]) => void)
         },
         tick(nowMs) {
+            // Before anything else: the tick's time becomes THE time, for door and link as well as
+            // for the wheels. See the note on `now` above.
+            tickNowMs = nowMs
             const dtMs = lastTickMs === null ? 0 : nowMs - lastTickMs
             lastTickMs = nowMs
             let travelled = 0
@@ -302,7 +316,41 @@ export const SCENARIO_NOTES: Readonly<Record<string, string>> = {
     'destination-correction': 'Destinations snap to a 0.0002° grid and anything beyond 300 m of the origin is rejected as unreachable.',
 }
 
-export type SimulatedFactoryOptions = { scenario: string | Scenario; now?: () => number; random?: () => number }
+export type SimulatedFactoryOptions = {
+    scenario: string | Scenario
+    now?: () => number
+    /** Fleet seed. The same seed and the same bot id always produce the same stream, run after run. */
+    seed?: string
+    /** Per-bot source of randomness. Default: mulberry32 seeded from `${seed}:${botId}` — see `seededRandom`. */
+    randomFor?: (botId: string) => () => number
+}
+
+/**
+ * ONE STREAM PER BOT, seeded from its id (controller ruling, Task 15). The factory used to hand the
+ * SAME `random` function to every driver, which couples each bot's noise to every other bot's
+ * command timing: the draws a bot makes per tick depend on its own STATE — `drift()` returns before
+ * drawing when its bound is 0, the dwell draws happen only while the bot is progressing, and an idle
+ * bot never calls `stepRoute` at all — so the same seed produced a different trace for a bot
+ * depending on where it sat in the roster and on what the others happened to be doing. Sorting the
+ * roster does not fix that; only a stream per bot does.
+ *
+ * mulberry32 over a 32-bit FNV-1a of the seed string: no dependency, and `random()` stays injected
+ * everywhere (global constraint), just once per bot instead of once per fleet.
+ */
+function seededRandom(seed: string): () => number {
+    let hash = 0x811c9dc5
+    for (let i = 0; i < seed.length; i += 1) {
+        hash = Math.imul(hash ^ seed.charCodeAt(i), 0x01000193) >>> 0
+    }
+    let state = hash >>> 0
+    return () => {
+        state = (state + 0x6d2b79f5) >>> 0
+        let t = state
+        t = Math.imul(t ^ (t >>> 15), t | 1)
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+}
 
 /**
  * `driver: simulated({ scenario: 'default' })` in efk.config.ts. `scenario` is a name under
@@ -321,12 +369,16 @@ export type SimulatedFactoryOptions = { scenario: string | Scenario; now?: () =>
  * It is parameterised with `SimulatedRobotDriver` so the CLI gets `tick()` and the TUI gets the
  * toggles without a cast, while still assigning to a bare `DriverFactory` wherever the kit only
  * wants a `RobotDriver`.
+ *
+ * Each bot gets its OWN stream of randomness, seeded from its id — see `seededRandom`.
  */
 export function simulated(options: SimulatedFactoryOptions): DriverFactory<SimulatedRobotDriver> {
     const scenario =
         typeof options.scenario === 'string'
             ? parseScenario(JSON.parse(readFileSync(scenarioPath(options.scenario), 'utf8')))
             : options.scenario
+    const seed = options.seed ?? 'efk'
+    const randomFor = options.randomFor ?? ((botId: string) => seededRandom(`${seed}:${botId}`))
     const factory: DriverFactory<SimulatedRobotDriver> = (botId, env) =>
         createSimulatedDriver({
             botId,
@@ -334,7 +386,7 @@ export function simulated(options: SimulatedFactoryOptions): DriverFactory<Simul
             origin: scenario.fleet.origin ?? env.origin,
             scatterRadiusM: scenario.fleet.scatterRadiusM,
             now: options.now ?? Date.now,
-            random: options.random ?? Math.random,
+            random: randomFor(botId),
         })
     factory.auditRoster = (roster) => overrideIdsNotIn(scenario, roster)
     return factory

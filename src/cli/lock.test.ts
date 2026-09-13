@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -50,6 +50,20 @@ describe('lockfile', () => {
         first.release()
         assert.equal(existsSync(path), true, 'a foreign lock survives our release')
         assert.equal((JSON.parse(readFileSync(path, 'utf8')) as { pid: number }).pid, 3001)
+    })
+    /**
+     * Cross-task debt: the lost race. When the lock cannot be created AND cannot be read, there is
+     * nobody to name — the old shape answered `{ held: { pid: -1, since: <now> } }`, so a CLI would
+     * have printed "already running (pid -1), since just now" at a partner. A directory in the
+     * lock's place is that case, deterministically: `wx` cannot create it and `readFileSync` cannot
+     * read it.
+     */
+    it('a lock we can neither take nor read is CONTENDED, not a holder with pid -1', () => {
+        const path = fresh()
+        mkdirSync(path)
+        const result = acquireLock(path, { pid: 4000, now: () => 9_000, isAlive: () => true })
+        assert.deepEqual(result, { contended: true })
+        assert.ok(!('held' in result), 'there is no holder to name, so none is invented')
     })
     it('an unreadable lock is stale and is taken over', () => {
         const path = fresh()

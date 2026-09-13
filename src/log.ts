@@ -87,14 +87,16 @@ const REDACT_PATHS = [
  * machine, a uniform 5-key cycle exhausted a 256 MB heap and took the process with it.
  *
  * The route in is `bot-runtime.ts`'s `log(message, data)` seam, which hands a PARTNER'S driver a
- * direct line onto the bus; the likeliest object to arrive through it is the error that driver's own
- * HTTP client threw, and in axios/undici shape that carries `config`/`request`/`response`
- * back-links. Worth being exact about this: that particular graph branches down to nothing and
- * finished in ~3 ms even unguarded — which is the point. A realistic-looking case surviving is not
- * evidence that the guard is unnecessary, because the object one field away from it is fatal.
+ * direct line onto the bus. The obvious candidate — the error that driver's own HTTP client threw,
+ * carrying axios/undici `config`/`request`/`response` back-links — turns out NOT to be the dangerous
+ * one: roughly one back-edge per node keeps it near-linear, and it finished in ~3 ms even unguarded.
+ * The shape that kills is one where SEVERAL of an object's own keys alias the object itself — a
+ * shared context, registry or client exposed as `self`, `parent`, `root` and `instance` at once,
+ * which is ordinary in a driver and produces k back-edges from one node. A realistic-looking case
+ * surviving is not evidence the guard is unnecessary.
  * `seen`/`active` below is the real guard; this bound is the second net.
  */
-const MAX_REDACT_DEPTH = 12
+export const MAX_REDACT_DEPTH = 12
 
 /** What a reference that points back into its own ancestry is replaced with. */
 const CIRCULAR = '[circular]'
@@ -127,9 +129,14 @@ function redactValue(
     if (typeof value === 'string') return scrub(value)
     if (value === null || typeof value !== 'object') return value
     if (active.has(value)) return CIRCULAR
+    // BEFORE the memo lookup, not after. `seen` keys on object identity alone, with no depth in it,
+    // so an object first met shallow is expanded and cached — and returning that cache to a later,
+    // DEEPER visit served the full expansion from past the bound, defeating the fail-closed net for
+    // exactly the case it exists for. Depth wins over the memo; a shared object is therefore intact
+    // wherever it is reachable inside the bound and censored wherever it is not.
+    if (depth > MAX_REDACT_DEPTH) return REDACTED
     const memo = seen.get(value)
     if (memo !== undefined) return memo
-    if (depth > MAX_REDACT_DEPTH) return REDACTED
     // A Date survives as itself: walking its (empty) enumerable entries would turn a timestamp a
     // partner's driver logged into `{}`, which is data loss dressed up as redaction.
     if (value instanceof Date) return value

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 import type { BotEvent, BotState } from './contract/schemas'
 import { createEventBus } from './core/events'
-import { createLogger } from './log'
+import { createLogger, MAX_REDACT_DEPTH } from './log'
 
 /** What the bus carried, unflattened, so a test can assert on the exact property instead of a substring. */
 function recorder() {
@@ -297,6 +297,34 @@ describe('logger', () => {
         assert.deepEqual(walked, { a: '[circular]', b: '[circular]', c: '[circular]', d: '[circular]', e: '[circular]' })
         assert.equal(entry.message, 'driver handed us a graph')
         assert.equal(typeof JSON.stringify(entry), 'string')
+    })
+
+    it('a shared object that CROSSES MAX_REDACT_DEPTH is censored on the deep path and intact on the shallow one', () => {
+        // The memo keys on object identity alone, so an object first met at a shallow depth is
+        // expanded and cached — and without the depth guard on the memo hit, meeting THE SAME object
+        // again past the bound returned that cached expansion instead of the censor. That defeated
+        // the fail-closed net for exactly the case it exists for: something the key layer missed,
+        // buried deep. Both halves are asserted, because a fix that redacted BOTH occurrences would
+        // pass a lone absence check just as happily.
+        const shared: Record<string, unknown> = { juicy: 'super-secret-value-the-key-layer-missed' }
+        // `shared` sits at depth 3 + k; k = MAX - 2 puts it one level PAST the bound while every
+        // link of the chain above it stays inside, so the walk really reaches it instead of being
+        // cut short higher up.
+        let chain: Record<string, unknown> = { shared }
+        for (let i = 0; i < MAX_REDACT_DEPTH - 2; i += 1) chain = { next: chain }
+        const { bus, entries } = recorder()
+        createLogger('debug', bus, { sink: 'bus', secrets: [] })
+        // `shallow` first, so the memo is populated before the deep path is walked.
+        bus.emit('log', { level: 'info', message: 'shared across the bound', data: { shallow: shared, deep: chain } })
+        const entry = entries[0]
+        assert.ok(entry)
+        const data = entry.data as { shallow: Record<string, unknown>; deep: Record<string, unknown> }
+        // Shallow: the real content, untouched. This is the half a blanket redaction would break.
+        assert.deepEqual(data.shallow, { juicy: 'super-secret-value-the-key-layer-missed' })
+        let node = data.deep
+        for (let i = 0; i < MAX_REDACT_DEPTH - 2; i += 1) node = node.next as Record<string, unknown>
+        // Deep: the same object, past the bound, censored rather than served from the memo.
+        assert.equal(node.shared, '[redacted]')
     })
 
     it('a payload nested past MAX_REDACT_DEPTH fails closed', () => {

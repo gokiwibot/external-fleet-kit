@@ -86,9 +86,10 @@ export function createPushClient(deps: { remi: RemiClient; bus: EventBus; sleep?
             }
             return delivered
         },
-        async pushEvent(event: BotEvent): Promise<void> {
-            // Events are NOT superseded by the next one, so they are never skipped.
-            await retrying('POST /api/v3/fleet/events', () => deps.remi.reportEvent(event))
+        /** Events are NOT superseded by the next one, so they are never skipped. Answers whether it landed. */
+        async pushEvent(event: BotEvent): Promise<boolean> {
+            const result = await retrying('POST /api/v3/fleet/events', () => deps.remi.reportEvent(event))
+            return result.ok
         },
     }
 }

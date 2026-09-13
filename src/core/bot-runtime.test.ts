@@ -422,6 +422,33 @@ describe('bot runtime — the publish seam', () => {
         const pushed = await runtime.tick(clock.nowMs, accepting().send)
         assert.equal(pushed?.seq, 1, 'the served polls consumed no counter')
     })
+    it('a buffered state counts as published only when the transport confirms it, and only once', async () => {
+        const { clock, runtime, seq, warnings } = harness()
+        const expired = (id: string) =>
+            runtime.handleCommand(nav(id, clock.nowMs, { expires_at: new Date(clock.nowMs - 1).toISOString() }), 'http')
+        await expired('J/a')
+        await expired('J/b')
+        // What the HTTP push transport answers: the state is in this tick's batch, not at remi.
+        const buffered: BotState[] = []
+        const pushed = await runtime.tick(clock.nowMs, (state) => {
+            buffered.push(state)
+            return false
+        })
+        assert.equal(pushed, null)
+        assert.equal(seq.peek('ACME-0001'), 0, 'a state sitting in a buffer has spent no counter')
+        assert.equal(runtime.currentCommand()?.id, 'J/a', 'and drained no outcome')
+        const state = buffered[0]
+        assert.ok(state)
+        assert.equal(runtime.confirmPublished(state), true)
+        assert.equal(seq.peek('ACME-0001'), 1)
+        assert.equal(runtime.currentCommand()?.id, 'J/b', 'the batch landed, so the head moves on')
+        assert.equal(
+            runtime.confirmPublished(state),
+            false,
+            'a second confirmation would burn a counter and pop an outcome remi has not seen',
+        )
+        assert.match(warnings.join('\n'), /publish confirmation for seq 1/)
+    })
     it('a state from another bot never acknowledges this one', async () => {
         const { clock, driver, runtime } = harness()
         await runtime.handleCommand(nav('J/a', clock.nowMs), 'http')

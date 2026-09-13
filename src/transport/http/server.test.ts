@@ -137,6 +137,12 @@ describe('partner HTTP surface', () => {
         const wrong = await (await app.request('/bots', { headers: { authorization: `Bearer ${'b'.repeat(32)}` } })).text()
         assert.equal(absent, wrong, 'telling them apart tells a caller probing the surface which half of the guess was right')
         assert.doesNotMatch(absent, /aaaa/, 'the configured token never appears in a response')
+        // The comparison is constant time over SHA-256 digests, so a header of any length takes the
+        // same path: a length check in front of it would leak the token's length instead.
+        const shorter = await (await app.request('/bots', { headers: { authorization: 'Bearer b' } })).text()
+        const longer = await (await app.request('/bots', { headers: { authorization: `Bearer ${'b'.repeat(200)}` } })).text()
+        assert.equal(shorter, wrong)
+        assert.equal(longer, wrong)
     })
     it('GET /bots returns every bot as a complete BotState, without seq, and reports it served', async () => {
         const { app, auth, bus } = await harness()

@@ -49,8 +49,10 @@ export type BotRuntimeDeps = {
 
 /**
  * Hands one assembled state to the transport and answers whether it REALLY left the process: MQTT
- * returns false for a bot whose link is down, HTTP returns false whenever push is off. A `false` (or
- * a throw) costs the state and nothing else — no seq, no acknowledgement to the ledger.
+ * returns false for a bot whose link is down, HTTP always answers false — without push nothing is
+ * sent at all (remi polls), and with push the state is only BUFFERED until the tick's batch is
+ * flushed, which is a later and separate question (see `confirmPublished`). A `false` (or a throw)
+ * costs the state and nothing else — no seq, no acknowledgement to the ledger.
  */
 export type PublishState = (state: BotState) => boolean | Promise<boolean>
 
@@ -86,6 +88,22 @@ export interface BotRuntime {
      * acknowledge nothing.
      */
     markServed(state: BotState): void
+    /**
+     * The DEFERRED half of THE PUBLISH SEAM, for a transport that cannot answer `publishState`
+     * truthfully at the moment it is asked. The HTTP push transport buffers a whole tick and sends it
+     * at `flushTick`, so when it is handed a state nothing has left the process yet: it answers
+     * `false`, keeps the state, and calls this ONLY once the bytes really reached remi. It does
+     * exactly what a `true` from `publishState` would have done — consumes the `seq` the state
+     * carries and drains the ledger — so a batch that is skipped, superseded, given up on, or still
+     * pending at `stop()` is simply never confirmed: the counter stays unspent and the outcome stays
+     * queued for remi. Answering `true` on the way into a buffer instead is how an outcome remi is
+     * owed gets marked delivered for bytes that never left (ruling R4).
+     *
+     * It refuses anything but the state whose `seq` is the one still reserved, so a double
+     * confirmation cannot burn a counter or pop a queue head that belongs to another outcome.
+     * Returns whether the confirmation took, which is what makes `state.published` honest.
+     */
+    confirmPublished(state: BotState): boolean
     /**
      * The last state that DID assemble, with its own (older) timestamp. `GET /bots` must answer with
      * every bot on every call, so a bot whose driver momentarily lost its position is served from
@@ -338,6 +356,21 @@ export function createBotRuntime(deps: BotRuntimeDeps): BotRuntime {
         },
         assemble,
         markServed: acknowledge,
+        confirmPublished(state) {
+            if (state.bot_id !== botId) return false
+            const reserved = seq.peek(botId) + 1
+            if (state.seq !== reserved) {
+                bus.emit('log', {
+                    level: 'warn',
+                    botId,
+                    message: `ignored a publish confirmation for seq ${String(state.seq)}: the reserved counter is ${reserved}, so that state was confirmed already or never left through this seam`,
+                })
+                return false
+            }
+            seq.next(botId)
+            acknowledge(state)
+            return true
+        },
         lastValidState: () => lastValid,
         async tick(nowMs, publish) {
             // A tick that overtook the publish in flight would reserve the same seq twice. Ticks for

@@ -9,8 +9,9 @@ export interface Transport {
     stop(): Promise<void>
     /**
      * True when the state really left the process. False is a legitimate answer, not an error: a bot
-     * the link policy has taken offline has no connection, and HTTP without push publishes nothing
-     * at all because remi polls. The manager uses this to decide whether `state.published` happened —
+     * the link policy has taken offline has no connection, HTTP without push publishes nothing at all
+     * because remi polls, and HTTP WITH push has only buffered the state for the tick's batch — it
+     * confirms later, through `BotRuntime.confirmPublished`, once remi has actually taken the batch. The manager uses this to decide whether `state.published` happened —
      * emitting it unconditionally is how a dashboard ends up showing a steady publish rate for a
      * fleet that has been disconnected for ten minutes.
      */

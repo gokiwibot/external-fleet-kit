@@ -7,6 +7,7 @@
  * `POST /destinations/validate` is answered by the first bot's driver: it is a fleet question and must
  * give the same answer for the same coordinate.
  */
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
 import {
     type BotCommand,
@@ -109,14 +110,26 @@ export function outcomeToResponse(outcome: CommandOutcome): Response {
     }
 }
 
+/**
+ * CONSTANT TIME, over digests. This header is the only thing between the public internet and a
+ * partner's fleet, and `===` on strings returns at the first differing byte — enough for a caller
+ * who can measure to walk the token one character at a time. Both sides are hashed first so the
+ * comparison is always over 32 bytes: `timingSafeEqual` throws on a length mismatch, and guarding
+ * that with a length check would leak the token's length instead.
+ */
+function bearerCheck(token: string): (header: string) => boolean {
+    const expected = createHash('sha256').update(`Bearer ${token}`).digest()
+    return (header) => timingSafeEqual(createHash('sha256').update(header).digest(), expected)
+}
+
 export function createPartnerApp(deps: PartnerAppDeps): Hono {
     const app = new Hono()
+    const authorised = bearerCheck(deps.token)
 
     app.use('*', async (c, next) => {
-        const header = c.req.header('authorization') ?? ''
         // One answer for "no token" and for "wrong token": telling them apart tells a caller probing
         // the surface which half of the guess was right. The token itself is never echoed anywhere.
-        if (header !== `Bearer ${deps.token}`) return problem(401, 'UNAUTHORIZED')
+        if (!authorised(c.req.header('authorization') ?? '')) return problem(401, 'UNAUTHORIZED')
         await next()
     })
 

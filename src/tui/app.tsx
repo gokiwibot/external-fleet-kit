@@ -2,12 +2,11 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { useState } from 'react'
 import type { EventBus } from '../core/events'
 import type { FleetManager } from '../core/fleet-manager'
-import { describeThrown } from '../net-failure'
 import { BotsSection } from './bots-section'
 import { CommandsSection } from './commands-section'
 import { EventsSection } from './events-section'
 import { LogSection } from './log-section'
-import { manualControls, nextOfflinePin, toggleAvailable } from './model'
+import { controlsFor, guardToggle, nextOfflinePin, toggleAvailable } from './model'
 import { useBusSnapshot } from './use-bus-snapshot'
 
 const SECTIONS = ['BOTS', 'COMMANDS', 'EVENTS', 'LOG'] as const
@@ -31,7 +30,9 @@ export function App({ bus, manager, demo, onQuit }: { bus: EventBus; manager: Fl
      * fault keys act on are different bots, which is the worst possible bug in a fault-injection UI.
      */
     const selectedBot = bots[selected]?.botId
-    const controls = manualControls(manager.driver(selectedBot ?? ''))
+    // Guarded end to end: this runs in the render body, where a driver that throws — from the lookup
+    // or from one of the five property reads — would unmount the screen and take the fleet with it.
+    const controls = controlsFor(manager, selectedBot)
 
     useInput((input, key) => {
         if (input === 'q' || (key.ctrl && input === 'c')) {
@@ -52,12 +53,10 @@ export function App({ bus, manager, demo, onQuit }: { bus: EventBus; manager: Fl
             else setSelected((i) => Math.min(bots.length - 1, i + 1))
         }
         if (!selectedBot || !controls) return
-        const runtime = manager.bots().find((b) => b.botId === selectedBot)
-        // A driver that throws out of a toggle must cost the keystroke and nothing else. These
-        // controls belong to whatever driver `efk.config.ts` built, and an exception here would
-        // leave Ink's input handler, unmount the screen, and take the partner's running simulation
-        // with it — the same harm a malformed event would do, through the keyboard instead.
-        try {
+        // Every driver call below goes through `guardToggle`: a driver that throws must cost the
+        // keystroke and one note, not the screen and the simulation behind it.
+        const refusal = guardToggle(selectedBot, () => {
+            const runtime = manager.bots().find((b) => b.botId === selectedBot)
             if (input === 'a' && runtime) {
                 // Reads back what the driver actually did: on a flat battery the toggle cannot win,
                 // and a control that silently does nothing is worse than one that says why (see
@@ -81,9 +80,8 @@ export function App({ bus, manager, demo, onQuit }: { bus: EventBus; manager: Fl
                 else controls.emitUnblocked()
                 setBlocked((m) => ({ ...m, [selectedBot]: next }))
             }
-        } catch (error) {
-            setNote(`${selectedBot} refused that key: ${describeThrown(error)}`)
-        }
+        })
+        if (refusal !== null) setNote(refusal)
     })
 
     return (

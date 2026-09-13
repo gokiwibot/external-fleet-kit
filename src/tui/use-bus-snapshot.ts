@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { EventBus } from '../core/events'
 import type { FleetManager } from '../core/fleet-manager'
-import { applyReplay, type BotRow, botRows, createModel, reduce, type TuiModel } from './model'
+import { applyReplay, type BotRow, botRows, createModel, reduce, reportableDriverFailures, type TuiModel } from './model'
 
 /**
  * Subscribes to the bus and folds every event into a ref; React state is refreshed on a fixed tick
@@ -16,6 +16,8 @@ import { applyReplay, type BotRow, botRows, createModel, reduce, type TuiModel }
  */
 export function useBusSnapshot(bus: EventBus, manager: FleetManager, intervalMs = 500): { model: TuiModel; bots: BotRow[]; now: number } {
     const modelRef = useRef<TuiModel>(createModel())
+    /** Bots whose driver has already been reported as throwing, so the LOG is not a twice-a-second drumbeat. */
+    const reportedRef = useRef<Set<string>>(new Set())
     const [snapshot, setSnapshot] = useState<{ model: TuiModel; bots: BotRow[]; now: number }>(() => ({
         model: modelRef.current,
         bots: botRows(manager, modelRef.current, Date.now()),
@@ -29,7 +31,14 @@ export function useBusSnapshot(bus: EventBus, manager: FleetManager, intervalMs 
         })
         const publish = () => {
             const now = Date.now()
-            setSnapshot({ model: modelRef.current, bots: botRows(manager, modelRef.current, now), now })
+            const bots = botRows(manager, modelRef.current, now)
+            // A driver that throws does it on every tick. `reportableDriverFailures` is what turns
+            // that into one line per failure — and into a new line if the bot recovers and fails
+            // again — instead of two lines a second for the rest of the run.
+            for (const failure of reportableDriverFailures(bots, reportedRef.current)) {
+                modelRef.current = reduce(modelRef.current, 'log', { level: 'error', botId: failure.botId, message: failure.message }, now)
+            }
+            setSnapshot({ model: modelRef.current, bots, now })
         }
         // Once immediately, so the replayed history is on screen at the first frame instead of after
         // the first tick: the panel is empty for half a second otherwise, which is exactly the

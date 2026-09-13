@@ -26,20 +26,36 @@ export function BotsSection({
             <Text
                 dimColor
             >{`  ${pad('bot', 14)} ${pad('link', 6)} ${pad('avail', 6)} ${pad('batt', 5)} ${pad('door', 12)} ${pad('command', 30)} ${pad('age', 7)} ${pad('seq', 8)} drops`}</Text>
-            {rows.map((r, i) => (
-                <Box key={r.botId}>
-                    <Text color={i === selected ? 'cyan' : undefined}>{i === selected ? '▶ ' : '  '}</Text>
-                    <Text bold={i === selected}>{pad(r.botId, 14)} </Text>
-                    <Text color={r.connected ? 'green' : 'red'}>{pad(linkLabel(r.connected, offlinePins[r.botId]), 6)} </Text>
-                    <Text color={r.available ? 'green' : 'yellow'}>{pad(r.available ? 'yes' : 'no', 6)} </Text>
-                    <Text color={r.batteryPercentage < 20 ? 'red' : undefined}>{pad(`${r.batteryPercentage}%`, 5)} </Text>
-                    <Text color={r.door === 'stalled' ? 'red' : undefined}>{pad(r.door, 12)} </Text>
-                    <Text>{pad(r.command, 30)} </Text>
-                    <Text dimColor>{age(r.lastPublishedAgeMs)} </Text>
-                    <Text dimColor>{pad(r.seq === null ? '—' : String(r.seq), 8)} </Text>
-                    <Text color={r.dropped > 0 ? 'red' : 'gray'}>{r.dropped}</Text>
-                </Box>
-            ))}
+            {rows.map((r, i) =>
+                r.driverError !== null ? (
+                    // Reading this bot's driver threw. Everything the driver would have answered is
+                    // unknown, so the row says so instead of printing a `down`/`0%` that reads as
+                    // fact; the age and the seq are the kit's own and stay.
+                    <Box key={r.botId}>
+                        <Text color={i === selected ? 'cyan' : undefined}>{i === selected ? '▶ ' : '  '}</Text>
+                        <Text bold={i === selected} color='red'>
+                            {pad(r.botId, 14)}{' '}
+                        </Text>
+                        <Text color='red'>{pad(`driver error — ${r.driverError}`, 63)} </Text>
+                        <Text dimColor>{age(r.lastPublishedAgeMs)} </Text>
+                        <Text dimColor>{pad(r.seq === null ? '—' : String(r.seq), 8)} </Text>
+                        <Text color='red'>?</Text>
+                    </Box>
+                ) : (
+                    <Box key={r.botId}>
+                        <Text color={i === selected ? 'cyan' : undefined}>{i === selected ? '▶ ' : '  '}</Text>
+                        <Text bold={i === selected}>{pad(r.botId, 14)} </Text>
+                        <Text color={r.connected ? 'green' : 'red'}>{pad(linkLabel(r.connected, offlinePins[r.botId]), 6)} </Text>
+                        <Text color={r.available ? 'green' : 'yellow'}>{pad(r.available ? 'yes' : 'no', 6)} </Text>
+                        <Text color={r.batteryPercentage < 20 ? 'red' : undefined}>{pad(`${r.batteryPercentage}%`, 5)} </Text>
+                        <Text color={r.door === 'stalled' ? 'red' : undefined}>{pad(r.door, 12)} </Text>
+                        <Text>{pad(r.command, 30)} </Text>
+                        <Text dimColor>{age(r.lastPublishedAgeMs)} </Text>
+                        <Text dimColor>{pad(r.seq === null ? '—' : String(r.seq), 8)} </Text>
+                        <Text color={r.dropped > 0 ? 'red' : 'gray'}>{r.dropped}</Text>
+                    </Box>
+                ),
+            )}
             {note !== null && (
                 <Box marginTop={1}>
                     <Text color='yellow'>{note}</Text>

@@ -1,19 +1,28 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { BotCommand, CommandStatus } from '../contract/schemas'
+import type { BotRuntime } from '../core/bot-runtime'
 import { createEventBus, REPLAY_BUFFER_MAX } from '../core/events'
+import type { FleetManager } from '../core/fleet-manager'
+import type { RobotDriver } from '../driver/robot-driver'
 import { createSimulatedDriver } from '../driver/simulated'
 import { botScenarioSchema } from '../driver/simulated/scenario'
 import {
     applyReplay,
+    type BotRow,
+    botRows,
+    controlsFor,
     createModel,
+    guardToggle,
     hhmmss,
     linkLabel,
+    type ManualControls,
     manualControls,
     nextOfflinePin,
     outcomeLabel,
     pad,
     reduce,
+    reportableDriverFailures,
     toggleAvailable,
 } from './model'
 
@@ -250,5 +259,163 @@ describe('tui model, manual controls', () => {
         assert.equal(manualControls(undefined), null)
         const bare = { botId: 'ACME-0001', driverVersion: 1 as const }
         assert.equal(manualControls(bare as never), null)
+    })
+})
+
+/**
+ * A fleet of hand-built runtimes, because the property under test is what the TUI does with a
+ * `RobotDriver` the partner wrote — including one that throws, which the bundled simulator never does.
+ */
+function managerOf(runtimes: Array<Partial<BotRuntime> & { botId: string }>, drivers: Record<string, RobotDriver> = {}): FleetManager {
+    return {
+        bots: () => runtimes as BotRuntime[],
+        driver: (botId: string) => drivers[botId],
+    } as unknown as FleetManager
+}
+
+function healthyRuntime(botId: string): Partial<BotRuntime> & { botId: string } {
+    return {
+        botId,
+        snapshot: () => ({ position: { lat: 0, lng: 0 }, batteryPercentage: 87, door: 'closed', available: true, connected: true }),
+        currentCommand: () => null,
+        dropped: () => 0,
+    }
+}
+
+describe('tui model, a driver that throws cannot take the screen down', () => {
+    it('degrades only the row whose driver threw, and names the call that did it', () => {
+        const boom = {
+            ...healthyRuntime('ACME-0002'),
+            snapshot: () => {
+                throw new TypeError('the robot API is not reachable')
+            },
+        }
+        const rows = botRows(managerOf([healthyRuntime('ACME-0001'), boom, healthyRuntime('ACME-0003')]), createModel(), T0)
+
+        assert.equal(rows.length, 3)
+        // The property that matters: the healthy bots still render, with their real readings.
+        assert.equal(rows[0]?.driverError, null)
+        assert.equal(rows[0]?.batteryPercentage, 87)
+        assert.equal(rows[2]?.driverError, null)
+        assert.equal(rows[2]?.connected, true)
+        // And the failing one is legible instead of absent or half-built.
+        assert.equal(rows[1]?.botId, 'ACME-0002')
+        assert.equal(rows[1]?.command, 'driver error')
+        assert.match(rows[1]?.driverError ?? '', /^snapshot\(\) threw: /)
+        // `describeThrown` quotes no message, so nothing the driver was holding reaches the screen.
+        assert.equal(rows[1]?.driverError?.includes('the robot API is not reachable'), false)
+    })
+    it('names `dropped` when that is the call that threw', () => {
+        const boom = {
+            ...healthyRuntime('ACME-0001'),
+            dropped: () => {
+                throw new Error('nope')
+            },
+        }
+        const rows = botRows(managerOf([boom]), createModel(), T0)
+        assert.match(rows[0]?.driverError ?? '', /^dropped\(\) threw: /)
+    })
+    it('keeps the age and the seq the kit recorded itself, which the driver cannot invalidate', () => {
+        let model = createModel()
+        model = reduce(model, 'state.published', { botId: 'ACME-0001', state: { seq: 41 } as never, transport: 'mqtt' }, T0)
+        const boom = {
+            ...healthyRuntime('ACME-0001'),
+            snapshot: () => {
+                throw new Error('nope')
+            },
+        }
+        const rows = botRows(managerOf([boom]), model, T0 + 5_000)
+        assert.equal(rows[0]?.seq, 41)
+        assert.equal(rows[0]?.lastPublishedAgeMs, 5_000)
+    })
+    it('reports a failing driver once, not twice a second, and again only after it has recovered', () => {
+        const reported = new Set<string>()
+        const failing: BotRow[] = [
+            { ...blankRow('ACME-0001'), driverError: 'snapshot() threw: Error, with no code this kit can safely quote' },
+            blankRow('ACME-0002'),
+        ]
+        const first = reportableDriverFailures(failing, reported)
+        assert.equal(first.length, 1)
+        assert.equal(first[0]?.botId, 'ACME-0001')
+        assert.match(first[0]?.message ?? '', /reading its driver failed/)
+        // Same failure on the next tick: nothing new to say.
+        assert.deepEqual(reportableDriverFailures(failing, reported), [])
+        // It recovers...
+        assert.deepEqual(reportableDriverFailures([blankRow('ACME-0001'), blankRow('ACME-0002')], reported), [])
+        // ...and fails again, which IS news.
+        assert.equal(reportableDriverFailures(failing, reported).length, 1)
+    })
+})
+
+function blankRow(botId: string): BotRow {
+    return {
+        botId,
+        connected: true,
+        available: true,
+        batteryPercentage: 100,
+        door: 'closed',
+        command: '—',
+        lastPublishedAgeMs: null,
+        seq: null,
+        dropped: 0,
+        driverError: null,
+    }
+}
+
+describe('tui model, a driver that throws cannot take the keyboard down', () => {
+    /**
+     * Five controls that all throw, each with a message distinctive enough that finding it on screen
+     * could not be a coincidence: a driver's exception may quote anything it was holding.
+     */
+    const LEAK = 'live_sk_this_must_never_be_printed'
+    const hostileControls = (): ManualControls => {
+        const boom = () => {
+            throw new Error(LEAK)
+        }
+        return { setAvailable: boom, toggleDoorLocally: boom, setOffline: boom, emitBlocked: boom, emitUnblocked: boom }
+    }
+
+    it('runs the action and says nothing when it works', () => {
+        const calls: string[] = []
+        assert.equal(
+            guardToggle('ACME-0001', () => calls.push('setOffline')),
+            null,
+        )
+        assert.deepEqual(calls, ['setOffline'])
+    })
+    it('turns a control that throws into a note naming the bot, and does not rethrow', () => {
+        const controls = manualControls(hostileControls() as unknown as RobotDriver)
+        assert.notEqual(controls, null)
+        if (!controls) return
+        for (const press of [
+            () => controls.setOffline(null),
+            () => controls.toggleDoorLocally(),
+            () => controls.emitBlocked('operator_test'),
+        ]) {
+            const note = guardToggle('ACME-0001', press)
+            // Positive first — a stub that returned an empty string would pass the check below alone.
+            assert.match(note ?? '', /^ACME-0001 refused that key: /)
+            assert.equal(note?.includes(LEAK), false)
+        }
+    })
+    it('answers no controls for a driver whose own properties throw, instead of throwing in the render body', () => {
+        const hostile = { botId: 'ACME-0001', driverVersion: 1 }
+        Object.defineProperty(hostile, 'setAvailable', {
+            get() {
+                throw new Error('property access is not safe here')
+            },
+        })
+        assert.equal(manualControls(hostile as unknown as RobotDriver), null)
+        assert.equal(controlsFor(managerOf([], { 'ACME-0001': hostile as unknown as RobotDriver }), 'ACME-0001'), null)
+    })
+    it('answers no controls when the driver lookup itself throws', () => {
+        const manager = {
+            bots: () => [],
+            driver: () => {
+                throw new Error('the fleet is gone')
+            },
+        } as unknown as FleetManager
+        assert.equal(controlsFor(manager, 'ACME-0001'), null)
+        assert.equal(controlsFor(manager, undefined), null)
     })
 })

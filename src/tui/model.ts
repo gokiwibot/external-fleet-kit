@@ -261,26 +261,86 @@ export type BotRow = {
     lastPublishedAgeMs: number | null
     seq: number | null
     dropped: number
+    /** Set when reading the driver behind this bot threw; the other columns are then meaningless. */
+    driverError: string | null
 }
 
-/** One row per bot from the live runtimes plus what the model remembers about their publishes. */
+/**
+ * One row per bot from the live runtimes plus what the model remembers about their publishes.
+ *
+ * THE DRIVER IS SOMEBODY ELSE'S CODE. `runtime.snapshot()` is a direct pass-through to the
+ * `RobotDriver` the partner wrote (`bot-runtime.ts`), and this runs on every 500 ms tick: a driver
+ * that throws from it would take Ink down from inside the render and the partner would lose the
+ * simulation they were watching — over a panel that could not draw one row. The rest of the kit
+ * already treats a driver throw as an expected case (HTTP answers `503 DRIVER_ERROR`), and this is
+ * the same rule for the screen: that bot's row degrades to `driver error`, EVERY OTHER ROW STILL
+ * RENDERS, and what the kit knows without asking the driver — the age and the seq it recorded when
+ * the state was published — stays on the row.
+ *
+ * `step` names the call that threw rather than guessing, and `describeThrown` quotes no message, so
+ * nothing the driver was holding reaches the terminal.
+ */
 export function botRows(manager: FleetManager, model: TuiModel, nowMs: number): BotRow[] {
     return manager.bots().map((runtime) => {
-        const snap = runtime.snapshot()
-        const current = runtime.currentCommand()
         const published = model.published[runtime.botId]
-        return {
+        const known = {
             botId: runtime.botId,
-            connected: snap.connected,
-            available: snap.available,
-            batteryPercentage: snap.batteryPercentage,
-            door: snap.door,
-            command: current ? `${shortId(current)} ${current.state}` : '—',
             lastPublishedAgeMs: published ? nowMs - published.at : null,
             seq: published?.seq ?? null,
-            dropped: runtime.dropped(),
+        }
+        let step = 'snapshot'
+        try {
+            const snap = runtime.snapshot()
+            step = 'currentCommand'
+            const current = runtime.currentCommand()
+            step = 'dropped'
+            const dropped = runtime.dropped()
+            return {
+                ...known,
+                connected: snap.connected,
+                available: snap.available,
+                batteryPercentage: snap.batteryPercentage,
+                door: snap.door,
+                command: current ? `${shortId(current)} ${current.state}` : '—',
+                dropped,
+                driverError: null,
+            }
+        } catch (error) {
+            return {
+                ...known,
+                connected: false,
+                available: false,
+                batteryPercentage: 0,
+                door: '?',
+                command: 'driver error',
+                dropped: 0,
+                driverError: `${step}() threw: ${describeThrown(error)}`,
+            }
         }
     })
+}
+
+/**
+ * Which failing rows deserve a LOG line right now. A driver that throws does it on EVERY tick — twice
+ * a second, for ever — so the line is written once per failure and not again until that bot has read
+ * cleanly at least once. `reported` is the caller's memory (a ref in the hook) and is updated here:
+ * a bot that recovers is forgotten, so a second failure later is reported again rather than swallowed.
+ */
+export function reportableDriverFailures(rows: BotRow[], reported: Set<string>): Array<{ botId: string; message: string }> {
+    const fresh: Array<{ botId: string; message: string }> = []
+    for (const row of rows) {
+        if (row.driverError === null) {
+            reported.delete(row.botId)
+            continue
+        }
+        if (reported.has(row.botId)) continue
+        reported.add(row.botId)
+        fresh.push({
+            botId: row.botId,
+            message: `${row.botId}: reading its driver failed, ${row.driverError}. The rest of the fleet is unaffected.`,
+        })
+    }
+    return fresh
 }
 
 function shortId(status: CommandStatus): string {
@@ -305,17 +365,48 @@ export type ManualControls = {
 
 export function manualControls(driver: RobotDriver | undefined): ManualControls | null {
     if (!driver) return null
-    const d = driver as Partial<ManualControls>
-    if (
-        typeof d.setAvailable === 'function' &&
-        typeof d.toggleDoorLocally === 'function' &&
-        typeof d.setOffline === 'function' &&
-        typeof d.emitBlocked === 'function' &&
-        typeof d.emitUnblocked === 'function'
-    ) {
-        return d as ManualControls
+    // Five property reads on an object the partner built, from inside App's render body. A getter
+    // that throws there would unmount the screen, so a driver this cannot inspect is simply a driver
+    // without manual controls — which is what the BOTS legend already knows how to say.
+    try {
+        const d = driver as Partial<ManualControls>
+        if (
+            typeof d.setAvailable === 'function' &&
+            typeof d.toggleDoorLocally === 'function' &&
+            typeof d.setOffline === 'function' &&
+            typeof d.emitBlocked === 'function' &&
+            typeof d.emitUnblocked === 'function'
+        ) {
+            return d as ManualControls
+        }
+        return null
+    } catch {
+        return null
     }
-    return null
+}
+
+/** The same thing for App's render body, where the lookup itself is one more call that must not throw. */
+export function controlsFor(manager: FleetManager, botId: string | undefined): ManualControls | null {
+    if (!botId) return null
+    try {
+        return manualControls(manager.driver(botId))
+    } catch {
+        return null
+    }
+}
+
+/**
+ * Runs a manual fault key. The controls belong to whatever driver `efk.config.ts` built, so a throw
+ * here would leave Ink's input handler and unmount a running simulation — the same harm a malformed
+ * event would do, through the keyboard instead. It costs the keystroke and one note.
+ */
+export function guardToggle(botId: string, action: () => void): string | null {
+    try {
+        action()
+        return null
+    } catch (error) {
+        return `${botId} refused that key: ${describeThrown(error)}`
+    }
 }
 
 /**

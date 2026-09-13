@@ -25,6 +25,7 @@ import { createStateStore } from '../core/state-store'
 import type { RobotDriver } from '../driver/robot-driver'
 import { listScenarios } from '../driver/simulated'
 import { createLogger } from '../log'
+import { describeThrown } from '../net-failure'
 import { createRemiClient } from '../remi/client'
 import { createHttpTransport } from '../transport/http'
 import { createMqttTransport } from '../transport/mqtt'
@@ -241,7 +242,20 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
             if (checkTimer) clearTimeout(checkTimer)
             // Reverse order, on a COPY: `Array.prototype.reverse` mutates, and a second call (SIGINT
             // twice, or `q` followed by Ctrl+C) would then tear things down in the original order.
-            for (const stop of [...stops].reverse()) await stop()
+            //
+            // Each stop is guarded, and that is not defensiveness: `manager.stop()` is LAST in this
+            // walk and it is the one that calls `seq.flush()`. An earlier stop that threw — the TUI
+            // failing to unmount, the dashboard's socket refusing to close — would abort the loop
+            // and lose the counters, which is debt 6 again by another route.
+            for (const stop of [...stops].reverse()) {
+                try {
+                    await stop()
+                } catch (error) {
+                    log.error(
+                        `a component did not shut down cleanly: ${describeThrown(error)}; carrying on so the seq counters still reach disk`,
+                    )
+                }
+            }
             // Set BEFORE `finish?.()` and checked by the waiter below: a shutdown that arrives while
             // the dashboard or the TUI is still mounting would otherwise find `finish` still null,
             // resolve nothing, and leave `efk start` awaiting a promise no one can settle again.
@@ -263,6 +277,8 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
         // Installed BEFORE the dashboard and the TUI, not after: a Ctrl+C while the dashboard is
         // binding its port has to run this shutdown — and release the lock — rather than kill the
         // process through the default handler.
+        /** Which optional surface is being brought up, for the catch below. Null once both are up. */
+        let mounting: 'web' | 'tui' | null = null
         const onSignal = () => void shutdown()
         process.once('SIGINT', onSignal)
         process.once('SIGTERM', onSignal)
@@ -282,9 +298,15 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
                 await register(() => clearInterval(simTimer))
             }
 
-            if (options.web) await register(await deps.startWeb({ bus, manager, host: options.webHost, port: env.env.WEB_PORT, demo }))
-            if (!options.headless)
+            if (options.web) {
+                mounting = 'web'
+                await register(await deps.startWeb({ bus, manager, host: options.webHost, port: env.env.WEB_PORT, demo }))
+            }
+            if (!options.headless) {
+                mounting = 'tui'
                 await register(await deps.startTui({ bus, manager, roster: started.roster, demo, onQuit: () => void shutdown() }))
+            }
+            mounting = null
             if (options.check && !exiting) {
                 checkTimer = setTimeout(() => {
                     void (async () => {
@@ -302,7 +324,7 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
                             })
                             bus.emit('log', { level: report.exitCode === 0 ? 'info' : 'warn', message: `\n${formatReport(report)}` })
                         } catch (error) {
-                            bus.emit('log', { level: 'error', message: `efk check could not run: ${String(error)}` })
+                            bus.emit('log', { level: 'error', message: `efk check could not run: ${describeThrown(error)}` })
                         }
                     })()
                 }, deps.checkDelayMs)
@@ -316,6 +338,29 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
                 finish = resolveExit
             })
             return 0
+        } catch (error) {
+            /**
+             * DEBT 6 AGAIN, THROUGH A DOOR IT DID NOT NAME. Without this catch a throw out of
+             * `startWeb` or `startTui` leaves `startWith` through the `finally` alone: `shutdown()`
+             * never runs, so `manager.stop()` never runs, so **`seq.flush()` never happens** and
+             * every counter consumed this run is lost. The bot then reuses numbers on the next start
+             * and remi discards those states, silently, until the counter climbs back.
+             *
+             * `EADDRINUSE` on `--web` is the realistic trigger: a partner with something already on
+             * 4310 would lose the flush EVERY time, and nothing would ever tell them. So the failure
+             * takes exactly the same shutdown path a clean exit takes, and is reported the way the
+             * rest of this CLI reports a refusal to start — a sentence, not a stack trace.
+             */
+            const surface = mounting === 'web' ? 'the web dashboard' : mounting === 'tui' ? 'the TUI' : 'efk start'
+            const remedy =
+                mounting === 'web'
+                    ? ' Set WEB_PORT to a free port (or stop whatever is on it), or drop --web.'
+                    : mounting === 'tui'
+                      ? ' Run with --headless to keep the fleet running without the screen.'
+                      : ''
+            console.error(`${surface} failed to start: ${describeThrown(error)}.${remedy} Shutting the fleet down cleanly.`)
+            await shutdown()
+            return 1
         } finally {
             // Otherwise every `efk start` in a long-lived process leaves two listeners behind, and
             // Node starts warning about a leak after ten.

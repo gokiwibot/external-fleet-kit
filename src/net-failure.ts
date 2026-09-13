@@ -25,6 +25,8 @@
 
 /** Node system and TLS error codes worth naming. Shared with the MQTT classifier next to the transport. */
 export const SOCKET_REASONS: Readonly<Record<string, string>> = {
+    EADDRINUSE: 'something is already listening on that address (EADDRINUSE)',
+    EACCES: 'this process is not allowed to use that address or port (EACCES)',
     ECONNREFUSED: 'the host refused the connection (ECONNREFUSED)',
     ENOTFOUND: 'the host name did not resolve (ENOTFOUND)',
     EAI_AGAIN: 'the host name did not resolve, DNS is not answering (EAI_AGAIN)',
@@ -95,4 +97,29 @@ export function describeFetchFailure(error: unknown, timeoutMs?: number): string
         if (/parse url|invalid url/i.test(error.message)) return 'that is not a URL fetch can use'
     }
     return 'the request failed with no code this kit can safely quote'
+}
+
+/**
+ * The last resort, for a throw out of a library we do not control that is reported to a user but is
+ * not a `fetch` or a CONNECT — a publish that was rejected, a connection that would not close, a
+ * handler that blew up. Same rule, same reason: the code, never the text.
+ *
+ * The error's CLASS is named when there is no code, and that is deliberate. A class name is an
+ * identifier from somebody's source, not data from a connection, and it carries the one distinction
+ * the reader needs: `TypeError` says "this is a bug in the kit", where `Error` with an `ECONNRESET`
+ * says "the network went away". Losing that would make the constructed message strictly less useful
+ * than the raw one, which is not a trade worth making.
+ *
+ * NOT FOR EVERY `catch`. Where the exception IS the diagnostic and comes from something the reader
+ * owns — a syntax error in their own `efk.config.ts`, a throw out of their own driver, a JSON parse
+ * failure on a file they can open — the message is the whole point and is kept. The rule is about
+ * libraries that build their text out of connection options: those are `fetch` and mqtt.js.
+ */
+export function describeThrown(error: unknown): string {
+    const socket = describeSocketCode(errorCode(error))
+    if (socket) return socket
+    const code = errorCode(error)
+    if (typeof code === 'number') return `it was refused with reason code 0x${code.toString(16).padStart(2, '0')}`
+    const kind = error instanceof Error ? error.name : typeof error
+    return `${kind}, with no code this kit can safely quote`
 }

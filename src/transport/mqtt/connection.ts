@@ -14,6 +14,7 @@
  * for (ruling R2).
  */
 import mqtt, { type MqttClient } from 'mqtt'
+import { describeThrown } from '../../net-failure'
 import { describeMqttFailure } from './failure'
 
 /** Thrown when CONNECT succeeded but the broker refused the subscription (SUBACK failure). */
@@ -72,7 +73,7 @@ export function createMqttConnection(options: MqttConnectionOptions): MqttConnec
                     try {
                         handler(topic, payload.toString())
                     } catch (error) {
-                        options.log('error', `handler for ${topic} threw: ${String(error)}`)
+                        options.log('error', `handler for ${topic} threw: ${describeThrown(error)}`)
                     }
                 }
             })

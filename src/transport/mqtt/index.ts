@@ -17,6 +17,7 @@ import { type BotCommand, type BotEvent, type BotState, botCommandSchema, type F
 import { fleetCapabilitiesTopic, fleetClientId, fleetTopic, parseCommandTopic } from '../../contract/topics'
 import type { BotRuntime } from '../../core/bot-runtime'
 import type { CommandOutcome, EventBus } from '../../core/events'
+import { describeThrown } from '../../net-failure'
 import type { Transport } from '../transport'
 import { nextBackoffMs } from './backoff'
 import { createMqttConnection, type MqttConnection, type MqttConnectionOptions, SubscriptionDeniedError } from './connection'
@@ -105,7 +106,7 @@ export function createMqttTransport(
                     return
                 }
                 handler?.(addressed.botId, parsed.data).catch((error: unknown) =>
-                    log('error', `command handler threw: ${String(error)}`, botId),
+                    log('error', `command handler threw: ${describeThrown(error)}`, botId),
                 )
             })
             // QoS 0 is a DOWNGRADE, not a denial: the subscription exists and commands will arrive,
@@ -180,7 +181,7 @@ export function createMqttTransport(
         // A throw here must not strand the rest of the fleet: `stop()` walks every slot in turn.
         await connection
             ?.end()
-            .catch((error: unknown) => log('warn', `closing the connection failed: ${String(error)}`, slot.runtime.botId))
+            .catch((error: unknown) => log('warn', `closing the connection failed: ${describeThrown(error)}`, slot.runtime.botId))
         deps.bus.emit('link.changed', { botId: slot.runtime.botId, connected: false, reason })
     }
 
@@ -233,7 +234,7 @@ export function createMqttTransport(
             }
             await reconcile()
             timer = setInterval(() => {
-                reconcile().catch((error: unknown) => log('error', `reconcile failed: ${String(error)}`))
+                reconcile().catch((error: unknown) => log('error', `reconcile failed: ${describeThrown(error)}`))
             }, deps.reconcileMs ?? 1_000)
         },
         async stop() {

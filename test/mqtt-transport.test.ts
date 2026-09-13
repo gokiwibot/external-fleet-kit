@@ -452,12 +452,18 @@ describe('mqtt transport', () => {
         assert.equal(new Set(broker.clientIds()).size, 200, 'one client id per bot, all distinct')
 
         // One connection refuses to close. The other 199 must still be closed, not stranded behind it.
-        broker.for('ACME-0100').failEnd = new Error('socket already gone')
+        // The failure carries text of the kind mqtt.js can build out of its connect options, so the
+        // report is CONSTRUCTED (controller ruling) — it still says which bot and what happened, and
+        // quotes none of the exception.
+        broker.for('ACME-0100').failEnd = new Error('socket already gone for fleet_acme:hunter2')
         await transport.stop()
 
         assert.deepEqual(broker.live, [])
         assert.equal(broker.connections.filter((connection) => connection.ends === 1).length, 199)
-        assert.match(messages().join('\n'), /closing the connection failed: Error: socket already gone/)
+        const log = messages().join('\n')
+        assert.match(log, /closing the connection failed: Error, with no code this kit can safely quote/)
+        assert.ok(!log.includes('hunter2'), 'and the exception text does not ride along')
+        assert.ok(!log.includes('socket already gone'))
         assert.equal(await transport.publishState('ACME-0001', state('ACME-0001')), false)
     })
 })

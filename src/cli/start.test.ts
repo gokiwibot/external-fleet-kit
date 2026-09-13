@@ -6,7 +6,7 @@
  * `.env`, writes into the repository, or waits ten seconds.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
@@ -81,7 +81,12 @@ type Harness = {
     tmp: string
 }
 
-function harness(over: Partial<StartDeps> = {}, managerOver: Partial<FleetManager> = {}): Harness {
+function harness(
+    over: Partial<StartDeps> = {},
+    managerOver: Partial<FleetManager> = {},
+    /** Runs when the manager is built, with the deps it was built from — the seam onto the real `seq`. */
+    onManagerDeps?: (deps: FleetManagerDeps) => void,
+): Harness {
     const bus = createEventBus()
     const logs: Array<KitEvents['log']> = []
     bus.on('log', (payload) => logs.push(payload))
@@ -101,13 +106,19 @@ function harness(over: Partial<StartDeps> = {}, managerOver: Partial<FleetManage
         startWeb: async () => async () => {
             stops.push('web')
         },
-        createFleetManager: (_managerDeps: FleetManagerDeps) =>
-            fakeManager({
+        createFleetManager: (managerDeps: FleetManagerDeps) => {
+            onManagerDeps?.(managerDeps)
+            return fakeManager({
                 stop: async () => {
                     stops.push('manager')
+                    // What the REAL manager does last (fleet-manager.ts): the counters only survive
+                    // the process because `stop()` flushes them. Tests that assert the flush happened
+                    // need this double to keep that promise.
+                    managerDeps.seq.flush()
                 },
                 ...managerOver,
-            }),
+            })
+        },
         loadEnv: () => ({ ok: true, env: goodEnv() }),
         loadConfig: async () => ({ ok: true, config: kitConfig }),
         acquireLock: () => ({
@@ -138,6 +149,9 @@ async function waitFor(what: string, predicate: () => boolean, timeoutMs = 2_000
     }
 }
 
+/** Lets a test that overrides `startTui` still reach the `onQuit` the real one would have handed back. */
+const quitOf = new Map<string, () => void>()
+
 /** Every temp directory a harness made, removed after each test: this suite leaves no files. */
 const created: string[] = []
 
@@ -156,6 +170,7 @@ afterEach(() => {
     console.error = realError
     for (const dir of created) rmSync(dir, { recursive: true, force: true })
     created.length = 0
+    quitOf.clear()
 })
 
 describe('efk start', () => {
@@ -224,12 +239,17 @@ describe('efk start', () => {
         assert.equal(await running, 0)
 
         const onBus = h.logs.filter((entry) => entry.level === 'warn' && entry.message.includes('seq counters restart at 1'))
-        assert.equal(onBus.length, 1, 'the discard reaches the bus as a WARNING, not as info')
+        assert.ok(onBus.length >= 1, 'the discard reaches the bus as a WARNING, not as info')
         assert.ok(
             warned.some((line) => line.includes('seq counters restart at 1')),
             'and the terminal, since nothing is subscribed to the bus this early in startup',
         )
         assert.ok(onBus[0]?.message.includes(h.deps.statePath), 'naming the file it gave up on')
+        // Exactly twice, and bounded there: once when `createSeq` reads the file at construction, and
+        // once when `stop()`'s flush reads it again before overwriting it. The write REPAIRS the file,
+        // which is why there is never a third — asserted rather than assumed.
+        assert.equal(onBus.length, 2, 'startup read, then the flush read')
+        assert.deepEqual(JSON.parse(readFileSync(h.deps.statePath, 'utf8')), { v: 1, seq: {} }, 'and the flush left it readable')
     })
 
     it('leaves a readable state file alone and says nothing', async () => {
@@ -312,6 +332,78 @@ describe('efk start', () => {
         assert.ok(errored.join('\n').includes('no bots registered'))
         assert.equal(h.lockReleased(), 1)
         assert.equal(process.listenerCount('SIGINT'), before)
+    })
+
+    /**
+     * IMPORTANT 1 (review round 2). `startWith` had a `finally` and no `catch`, so a throw out of
+     * `startWeb` or `startTui` left the function without ever running `shutdown()` — no
+     * `manager.stop()`, therefore no `seq.flush()`, therefore every counter consumed this run lost.
+     * That is debt 6 exactly, arriving through a door the debt did not name, and `EADDRINUSE` on
+     * `--web` is the realistic trigger: a partner with something already on 4310 loses the flush
+     * every single time and is never told.
+     *
+     * Both tests below consume a counter BEFORE the crash and then read `.efk-state.json` off disk,
+     * because "stop() was called" is not the property that matters — "the number reached the file"
+     * is.
+     */
+    for (const surface of ['web', 'tui'] as const) {
+        it(`shuts down and flushes the seq counters when the ${surface} throws on the way up`, async () => {
+            const failure = Object.assign(new Error('listen EADDRINUSE: address already in use 127.0.0.1:4310'), { code: 'EADDRINUSE' })
+            const h = harness(
+                surface === 'web'
+                    ? {
+                          startWeb: async () => {
+                              throw failure
+                          },
+                      }
+                    : {
+                          startTui: async () => {
+                              throw failure
+                          },
+                      },
+                {},
+                // A publish happened before the crash, exactly as it would in a real run.
+                (managerDeps) => managerDeps.seq.next('ACME-0001'),
+            )
+
+            assert.equal(await startWith(options({ web: true }), h.deps), 1, 'a failed mount is a failed start, not a crash')
+            assert.ok(h.stops.includes('manager'), 'the fleet was stopped even though nothing called shutdown()')
+            assert.equal(h.lockReleased(), 1, 'and the lock was released')
+
+            const persisted = JSON.parse(readFileSync(h.deps.statePath, 'utf8')) as { seq: Record<string, number> }
+            assert.equal(persisted.seq['ACME-0001'], 1, 'THE POINT: the counter reached disk instead of being lost')
+
+            const reported = errored.join('\n')
+            assert.match(reported, /failed to start/)
+            assert.match(reported, /EADDRINUSE/, 'the node code is named')
+            assert.equal(reported.split('\n').length, 1, 'reported as one sentence')
+            assert.doesNotMatch(reported, /\n\s+at /, 'and not as a stack trace')
+        })
+    }
+
+    it('carries on shutting down when one component refuses to stop, so the counters still reach disk', async () => {
+        // The same loss by another route: `manager.stop()` is LAST in the shutdown walk, so an
+        // earlier stop that threw used to abort the loop before the flush.
+        const h = harness(
+            {
+                startTui: async (opts) => {
+                    quitOf.set('quit', opts.onQuit)
+                    return () => {
+                        throw new Error('ink refused to unmount')
+                    }
+                },
+            },
+            {},
+            (managerDeps) => managerDeps.seq.next('ACME-0002'),
+        )
+        const running = startWith(options(), h.deps)
+        await waitFor('the TUI to mount', () => quitOf.get('quit') !== undefined)
+        quitOf.get('quit')?.()
+        assert.equal(await running, 0)
+
+        assert.ok(h.stops.includes('manager'), 'the walk continued past the component that threw')
+        const persisted = JSON.parse(readFileSync(h.deps.statePath, 'utf8')) as { seq: Record<string, number> }
+        assert.equal(persisted.seq['ACME-0002'], 1, 'and the counter still reached disk')
     })
 
     it('removes its signal listeners on the way out', async () => {

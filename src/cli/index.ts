@@ -5,6 +5,7 @@ import { loadConfig } from '../config'
 import { CONTRACT_VERSION } from '../contract/version'
 import { createFakeRemiClient } from '../core/fake-remi'
 import { listScenarios, SCENARIO_NOTES } from '../driver/simulated'
+import { describeThrown } from '../net-failure'
 import { createRemiClient } from '../remi/client'
 import { formatReport, runCheck } from './check'
 import { loadEnv } from './env'
@@ -159,8 +160,22 @@ async function main(): Promise<number> {
 
 main().then(
     (code) => process.exit(code),
-    (error) => {
-        console.error(error)
+    (error: unknown) => {
+        /**
+         * The last resort. It used to `console.error(error)`, printing the raw object and its stack —
+         * the same shape the `parseArgs` handler above was fixed for, and the same credential problem
+         * every other path was fixed for, since `Error.stack` BEGINS with the message.
+         *
+         * So the sentence is constructed, and then the FRAMES are printed without it: file paths and
+         * function names out of this repo, which is what makes a bug report actionable, and none of
+         * the text a library built out of its connection options. Dropping the diagnostic entirely
+         * would trade one defect for another.
+         */
+        console.error(
+            `efk hit an error it does not handle: ${describeThrown(error)}. This is a bug in the kit — send Robot.com the lines below.`,
+        )
+        const frames = (error instanceof Error && error.stack ? error.stack.split('\n') : []).filter((line) => /^\s+at /.test(line))
+        if (frames.length > 0) console.error(frames.join('\n'))
         process.exit(1)
     },
 )

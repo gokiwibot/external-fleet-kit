@@ -21,6 +21,7 @@ import {
     fleetCapabilitiesSchema,
 } from '../contract/schemas'
 import type { RobotDriver } from '../driver/robot-driver'
+import { describeThrown } from '../net-failure'
 import type { RemiClient } from '../remi/client'
 import type { Transport } from '../transport/transport'
 import { type BotRuntime, createBotRuntime } from './bot-runtime'
@@ -132,13 +133,13 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
                     const state = await runtime.tick(nowMs, (candidate) => pipe.publishState(runtime.botId, candidate))
                     if (state) deps.bus.emit('state.published', { botId: runtime.botId, state, transport: pipe.kind })
                 } catch (error) {
-                    deps.bus.emit('log', { level: 'error', botId: runtime.botId, message: `publish failed: ${String(error)}` })
+                    deps.bus.emit('log', { level: 'error', botId: runtime.botId, message: `publish failed: ${describeThrown(error)}` })
                 }
             }
             try {
                 await transport?.flushTick()
             } catch (error) {
-                deps.bus.emit('log', { level: 'error', message: `push batch failed: ${String(error)}` })
+                deps.bus.emit('log', { level: 'error', message: `push batch failed: ${describeThrown(error)}` })
             }
         } finally {
             ticking = false
@@ -268,11 +269,13 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
             subscriptions.push(
                 deps.bus.on('event.emitted', (e) => {
                     if (e.delivered || !transport) return
-                    transport
-                        .publishEvent(e.botId, e.event)
-                        .catch((error: unknown) =>
-                            deps.bus.emit('log', { level: 'error', botId: e.botId, message: `event publish failed: ${String(error)}` }),
-                        )
+                    transport.publishEvent(e.botId, e.event).catch((error: unknown) =>
+                        deps.bus.emit('log', {
+                            level: 'error',
+                            botId: e.botId,
+                            message: `event publish failed: ${describeThrown(error)}`,
+                        }),
+                    )
                 }),
             )
 

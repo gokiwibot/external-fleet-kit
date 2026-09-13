@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
+import type { DriverFactory } from '../robot-driver'
 import { createSimulatedDriver, listScenarios, SCENARIO_NOTES, scenarioPath, simulated } from './index'
 import { metersBetween, NEVER_ARRIVE_GAP_M, STALL_FRACTION } from './motion'
 import { botScenarioFor, botScenarioSchema, parseScenario } from './scenario'
@@ -125,19 +126,48 @@ describe('simulated driver', () => {
         const now = { t: T0 }
         const d = driver({}, now)
         await d.start({ now: () => now.t, log: () => {} })
-        await d.navigateTo({ id: 'J/a', target: { lat: 0.01, lng: 0 } })
-        now.t += 250
-        d.tick(now.t)
-        assert.deepEqual(await d.navigateTo({ id: 'J/b', target: { lat: 0, lng: 0.01 } }), { kind: 'accepted' })
+        const aStates: string[] = []
         const cancelStates: string[] = []
         d.on('commandState', (id, state) => {
+            if (id === 'J/a') aStates.push(state)
             if (id === 'J/cancel') cancelStates.push(state)
         })
+        await d.navigateTo({ id: 'J/a', target: { lat: 0.01, lng: 0 } }) // due north
+        now.t += 250
+        d.tick(now.t)
+        assert.deepEqual(aStates, ['executing'])
+        const afterA = d.snapshot().position ?? origin
+        assert.deepEqual(await d.navigateTo({ id: 'J/b', target: { lat: 0, lng: 0.01 } }), { kind: 'accepted' }) // due east
+        now.t += 250
+        d.tick(now.t)
+        // Replacement, asserted rather than implied by the title: the bot re-targets on the spot, and
+        // the abandoned goal never gets a terminal out of the driver. Marking J/a REPLACED is the
+        // ledger's job (core), not this driver's — what the driver owes is silence about it.
+        const afterB = d.snapshot().position ?? origin
+        assert.ok(afterB.lng > afterA.lng, 'it is driving east now, toward J/b')
+        assert.ok(afterB.lat < afterA.lat, 'and no longer north, toward J/a')
+        assert.deepEqual(aStates, ['executing'], 'J/a is never answered again: no succeeded, no failed')
         assert.deepEqual(await d.cancelNavigation({ id: 'J/cancel' }), { kind: 'accepted' })
         now.t += 250
         d.tick(now.t)
         assert.deepEqual(cancelStates, ['succeeded'], 'one event: the robot has stopped')
+        assert.deepEqual(aStates, ['executing'], 'and the cancel does not answer J/a either')
         assert.equal(d.snapshot().speedMps, 0)
+    })
+    it('setOffline(null) hands the link back to the scenario instead of pinning it for ever', async () => {
+        const now = { t: T0 }
+        const d = driver({ link: { mode: 'flapping', flapPeriodMs: 2_000 } }, now)
+        await d.start({ now: () => now.t, log: () => {} })
+        assert.equal(d.wantsConnection(), true)
+        d.setOffline(true)
+        now.t += 1_000
+        assert.equal(d.wantsConnection(), false, 'the toggle outranks the scenario while it is set')
+        now.t += 1_000
+        assert.equal(d.wantsConnection(), false, 'and it stays down where the scenario would be back up')
+        d.setOffline(null)
+        assert.equal(d.wantsConnection(), true, 'handed back: a full period in, the scenario has the link up')
+        now.t += 1_000
+        assert.equal(d.wantsConnection(), false, 'and it flaps again, which a boolean-only toggle could never undo')
     })
     it('ackGoals: false silences the navigation echo ONLY; door and cancel still answer', async () => {
         const now = { t: T0 }
@@ -292,6 +322,8 @@ describe('simulated driver', () => {
         assert.equal(d.wantsConnection(), false)
         d.setOffline(false)
         assert.equal(d.wantsConnection(), true, 'the toggle overrides the scenario link in both directions')
+        d.setOffline(null)
+        assert.equal(d.wantsConnection(), true, 'and null gives the scenario (online) the link back')
         d.toggleDoorLocally()
         now.t += 2_000
         d.tick(now.t)
@@ -330,6 +362,18 @@ describe('simulated() factory', () => {
         const d = factory('ACME-0001', { origin })
         assert.equal(d.capabilities().hasDoor, true)
         assert.ok(listScenarios().includes('boolean-door'))
+    })
+    it('keeps the simulator surface and still fits where a bare DriverFactory is expected', () => {
+        const factory = simulated({ scenario: 'default', now: () => T0, random: fixed(0.5) })
+        // The compile-time half of the claim: `DriverFactory` is generic in the driver it builds
+        // (one declaration, ruling R12), so the narrow factory assigns to the bare one — the return
+        // type is covariant — and the CLI/TUI get `tick()` and the toggles with no cast and no guard.
+        const plain: DriverFactory = factory
+        const d = factory('ACME-0001', { origin })
+        d.tick(T0)
+        d.setOffline(null)
+        assert.equal(d.wantsConnection(), true)
+        assert.equal(plain('ACME-0002', { origin }).botId, 'ACME-0002')
     })
     it('names override ids that are not in the roster', () => {
         const factory = simulated({ scenario: 'low-battery' })

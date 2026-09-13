@@ -26,8 +26,6 @@ export type SimulatedDriverOptions = {
     random: () => number
 }
 
-type PendingDoor = { id: string; at: number }
-
 export interface SimulatedRobotDriver extends RobotDriver {
     /** Advance the simulation. Called by the fleet tick (250 ms) or by tests. */
     tick(nowMs: number): void
@@ -36,7 +34,8 @@ export interface SimulatedRobotDriver extends RobotDriver {
     // TUI toggles
     setAvailable(value: boolean): void
     toggleDoorLocally(): void
-    setOffline(value: boolean): void
+    /** `true`/`false` force the link; `null` hands it back to the scenario (`link.mode`). */
+    setOffline(value: boolean | null): void
     emitBlocked(reason: string, message?: string): void
     emitUnblocked(): void
 }
@@ -72,7 +71,6 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
     const bearing = random() * 360
     const radius = Math.sqrt(random()) * options.scatterRadiusM
     let position: Position = radius > 0 ? offsetBy(options.origin, radius, bearing) : options.origin
-    let heading = 0
     let speedMps = 0
     let nav: Navigation | null = null
     let lastTickMs: number | null = null
@@ -82,7 +80,7 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
     // but written after the `return` statement is not hoisted into a usable binding — it is a
     // ReferenceError at runtime and an error at typecheck.
     let pendingCancel: string | null = null
-    let pendingDoor: PendingDoor | null = null
+    let pendingDoor: string | null = null
     let lastConnected = true
 
     const door: Door = createDoor(scenario.door, now)
@@ -156,7 +154,7 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
             // tick — INCLUDING the case where the lid is already where it was asked to be and
             // `command()` returned false: `set_door: closed` on a closed door is what remi sends at
             // the end of every delivery, and it must succeed, not hang.
-            if (scenario.door.mode !== 'ignore') pendingDoor = { id: cmd.id, at: now() }
+            if (scenario.door.mode !== 'ignore') pendingDoor = cmd.id
             return { kind: 'accepted' }
         },
         validateDestination(target): Promise<DestinationValidation> {
@@ -202,7 +200,6 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
                     nav.travelledM = step.travelledM
                     nav.noise = step.noiseState
                     position = step.coords
-                    heading = step.heading
                     speedMps = step.speedMps
                     if (step.startDwellMs !== null) nav.dwellUntil = nowMs + step.startDwellMs
                     if (step.arrived) {
@@ -229,10 +226,10 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
             if (pendingDoor) {
                 const reported = door.reported()
                 if (reported === 'stalled') {
-                    emit('commandState', pendingDoor.id, 'failed', { code: 'DOOR_STALLED', message: 'door did not reach the target' })
+                    emit('commandState', pendingDoor, 'failed', { code: 'DOOR_STALLED', message: 'door did not reach the target' })
                     pendingDoor = null
                 } else if (!door.pending() && (reported === 'opened' || reported === 'closed')) {
-                    emit('commandState', pendingDoor.id, 'succeeded')
+                    emit('commandState', pendingDoor, 'succeeded')
                     pendingDoor = null
                 }
                 // Still moving: answer on a later tick. `boolean` mode reports `closed` throughout an
@@ -244,7 +241,6 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
                 lastConnected = nowConnected
                 emit('stateChanged')
             }
-            void heading
         },
         wantsConnection: connected,
         setAvailable(value) {
@@ -322,13 +318,16 @@ export type SimulatedFactoryOptions = { scenario: string | Scenario; now?: () =>
  *
  * `DriverFactory` is imported from `robot-driver.ts`, where it is declared once (controller ruling
  * R12): the CLI config loader needs the same type, and re-declaring it here would let the two drift.
+ * It is parameterised with `SimulatedRobotDriver` so the CLI gets `tick()` and the TUI gets the
+ * toggles without a cast, while still assigning to a bare `DriverFactory` wherever the kit only
+ * wants a `RobotDriver`.
  */
-export function simulated(options: SimulatedFactoryOptions): DriverFactory {
+export function simulated(options: SimulatedFactoryOptions): DriverFactory<SimulatedRobotDriver> {
     const scenario =
         typeof options.scenario === 'string'
             ? parseScenario(JSON.parse(readFileSync(scenarioPath(options.scenario), 'utf8')))
             : options.scenario
-    const factory: DriverFactory = (botId, env) =>
+    const factory: DriverFactory<SimulatedRobotDriver> = (botId, env) =>
         createSimulatedDriver({
             botId,
             scenario: botScenarioFor(scenario, botId),

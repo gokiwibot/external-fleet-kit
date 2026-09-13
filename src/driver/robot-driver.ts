@@ -105,7 +105,15 @@ export async function defaultValidateDestination(position: Position): Promise<De
  * that look wrong for this driver (for example, a scenario override that names a bot outside the
  * roster). `efk check` surfaces whatever it returns as a warning; returning nothing means "nothing
  * to flag".
+ *
+ * GENERIC in the driver it builds, defaulting to `RobotDriver`. A factory that builds something
+ * richer — `simulated()` builds a `SimulatedRobotDriver`, which adds `tick()` and the TUI toggles —
+ * says so as `DriverFactory<SimulatedRobotDriver>` and still assigns to a bare `DriverFactory`,
+ * because the return type is covariant. That keeps ONE declaration (ruling R12) while sparing the
+ * CLI (which drives `tick()`) and the TUI (the toggles) a cast or a type guard. The transport needs
+ * neither: `connected` is contract-required on every snapshot, so it reads the snapshot, not
+ * `wantsConnection()`.
  */
-export type DriverFactory = ((botId: string, env: { origin: Position }) => RobotDriver) & {
+export type DriverFactory<D extends RobotDriver = RobotDriver> = ((botId: string, env: { origin: Position }) => D) & {
     auditRoster?: (roster: string[]) => string[]
 }

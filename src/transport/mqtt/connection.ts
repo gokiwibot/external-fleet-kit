@@ -10,9 +10,11 @@
  * writing "falls back if the broker asks" here would be false. It does not need to be true: the
  * broker is EMQX and the contract page documents MQTT 5 features the fleet relies on. What the
  * fixed version DOES owe the partner is a legible failure when a broker refuses it, which is what
- * `isProtocolVersionRejection` below is for (ruling R2).
+ * `isProtocolVersionRejection` (now in `failure.ts`, so the classification lives in one place) is
+ * for (ruling R2).
  */
 import mqtt, { type MqttClient } from 'mqtt'
+import { describeMqttFailure } from './failure'
 
 /** Thrown when CONNECT succeeded but the broker refused the subscription (SUBACK failure). */
 export class SubscriptionDeniedError extends Error {
@@ -23,24 +25,6 @@ export class SubscriptionDeniedError extends Error {
         super(`broker denied the subscription to ${topic}`, options)
         this.name = 'SubscriptionDeniedError'
     }
-}
-
-/** CONNACK reason codes for "I do not speak your protocol version": 0x01 in 3.1.1, 0x84 in MQTT 5. */
-const PROTOCOL_VERSION_REASON_CODES: ReadonlySet<number> = new Set([1, 132])
-
-/**
- * Ruling R2 buys "MQTT 5 only, no 3.1.1 fallback" at the price of a legible failure: a CONNACK
- * refused over the protocol version must say so, instead of disappearing into the same retry loop
- * as a wrong password — whose remedy ("check MQTT_USERNAME/MQTT_PASSWORD") would send the partner
- * looking in the wrong place for ever. mqtt.js reports it as an `ErrorWithReasonCode` carrying the
- * numeric CONNACK reason code; the message check is the fallback for anything in between (a proxy,
- * a future mqtt.js) that only gives us the text.
- */
-export function isProtocolVersionRejection(error: unknown): boolean {
-    if (!(error instanceof Error)) return false
-    const code: unknown = (error as { code?: unknown }).code
-    if (typeof code === 'number' && PROTOCOL_VERSION_REASON_CODES.has(code)) return true
-    return /protocol version/i.test(error.message)
 }
 
 export type MqttConnectionOptions = {
@@ -79,7 +63,9 @@ export function createMqttConnection(options: MqttConnectionOptions): MqttConnec
             // CONNECT would take the whole kit down with it. The transport learns about the drop from
             // `isConnected()` (ruling R3); this listener exists so the process survives long enough to
             // be told. It never prints the credential: only the error's own message.
-            connected.on('error', (error: Error) => options.log('warn', `mqtt client error: ${error.message}`))
+            // Described, not quoted: mqtt.js builds its text from the connect options, credentials
+            // included (controller ruling; see `failure.ts`).
+            connected.on('error', (error: Error) => options.log('warn', `mqtt client error: ${describeMqttFailure(error)}`))
             connected.on('message', (topic, payload) => {
                 for (const { topic: wanted, handler } of handlers) {
                     if (wanted !== topic) continue

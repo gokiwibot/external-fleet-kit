@@ -19,13 +19,8 @@ import type { BotRuntime } from '../../core/bot-runtime'
 import type { CommandOutcome, EventBus } from '../../core/events'
 import type { Transport } from '../transport'
 import { nextBackoffMs } from './backoff'
-import {
-    createMqttConnection,
-    isProtocolVersionRejection,
-    type MqttConnection,
-    type MqttConnectionOptions,
-    SubscriptionDeniedError,
-} from './connection'
+import { createMqttConnection, type MqttConnection, type MqttConnectionOptions, SubscriptionDeniedError } from './connection'
+import { describeMqttFailure, isProtocolVersionRejection } from './failure'
 
 export type MqttTransportDeps = {
     namespace: string
@@ -137,12 +132,15 @@ export function createMqttTransport(
             if (slot.connection === connection) slot.connection = null
             await connection.end().catch(() => {})
             const wait = scheduleRetry(slot)
-            const message = error instanceof Error ? error.message : String(error)
+            // CONSTRUCTED, NEVER FORWARDED (controller ruling; see `failure.ts` and `net-failure.ts`).
+            // mqtt.js composes its text from the connect options it was handed, so quoting it here
+            // would put the broker password into the operator's log.
+            const message = describeMqttFailure(error)
             // Four failures that look alike in a log and have nothing else in common.
             if (stage === 'capabilities') {
                 log(
                     'error',
-                    `connected, but publishing the fleet capabilities document failed (${message}); dropping the connection and retrying in ${wait} ms — CONNECT and the command subscription both succeeded, so check that ${deps.username} may publish to ${fleetCapabilitiesTopic(deps.namespace)}`,
+                    `connected, but publishing the fleet capabilities document failed; dropping the connection and retrying in ${wait} ms — CONNECT and the command subscription both succeeded, so check that ${deps.username} may publish to ${fleetCapabilitiesTopic(deps.namespace)}`,
                     botId,
                 )
             } else if (error instanceof SubscriptionDeniedError) {
@@ -158,10 +156,12 @@ export function createMqttTransport(
                 // which would be the wrong afternoon to send the partner on.
                 log(
                     'error',
-                    `CONNECT refused over the protocol version (${message}); this kit speaks MQTT 5 only and does not fall back to 3.1.1, so retrying will not fix it: point MQTT_HOST at an MQTT 5 broker (remi's is EMQX 5) — retrying in ${wait} ms`,
+                    `CONNECT refused over the protocol version; this kit speaks MQTT 5 only and does not fall back to 3.1.1, so retrying will not fix it: point MQTT_HOST at an MQTT 5 broker (remi's is EMQX 5) — retrying in ${wait} ms`,
                     botId,
                 )
             } else {
+                // Read off the CLASSIFICATION, not off mqtt.js's text: every "not authorised" spelling
+                // in `describeMqttFailure` keeps that phrase precisely so this stays true.
                 const notAuthorised = /not authori/i.test(message)
                 log(
                     slot.attempt === 1 ? 'error' : 'warn',

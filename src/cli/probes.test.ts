@@ -13,7 +13,9 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { describeConnectFailure, describeFetchFailure, httpProbe, mqttProbe } from './probes'
+import { describeFetchFailure } from '../net-failure'
+import { describeMqttFailure } from '../transport/mqtt/failure'
+import { httpProbe, mqttProbe } from './probes'
 
 /** A closed port that is a legal HTTP port — node rejects port 1 as "bad port" before it connects. */
 const CLOSED = 45_999
@@ -22,7 +24,7 @@ describe('probe error sanitisation', () => {
     it('never forwards an mqtt exception that carries the broker password', () => {
         // mqtt.js and its transports build messages from connection options on several paths.
         const leaky = Object.assign(new Error('Connection refused: Not authorized (username=fleet_acme password=hunter2)'), { code: 5 })
-        const described = describeConnectFailure(leaky)
+        const described = describeMqttFailure(leaky)
         assert.ok(!described.includes('hunter2'), `the password must not survive: ${described}`)
         assert.ok(!described.includes('fleet_acme'), 'nor the rest of the quoted message')
         assert.match(described, /not authori/i, "and C5's credential branch still has the word it looks for")
@@ -32,29 +34,29 @@ describe('probe error sanitisation', () => {
         // C5 chooses between the credential remedy and the network remedy on /not authori/i. If a
         // classification loses that phrase, a wrong password sends the partner to debug a firewall.
         for (const code of [4, 5, 134, 135, 138]) {
-            assert.match(describeConnectFailure(Object.assign(new Error('x'), { code })), /not authori/i, `reason code ${code}`)
+            assert.match(describeMqttFailure(Object.assign(new Error('x'), { code })), /not authori/i, `reason code ${code}`)
         }
         // And with no code at all, which is how mqtt.js reports some 3.1.1 refusals.
-        assert.match(describeConnectFailure(new Error('Connection refused: Not authorized')), /not authori/i)
+        assert.match(describeMqttFailure(new Error('Connection refused: Not authorized')), /not authori/i)
     })
 
     it('does not call a network failure an authentication failure', () => {
-        const refused = describeConnectFailure(Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:8883'), { code: 'ECONNREFUSED' }))
+        const refused = describeMqttFailure(Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:8883'), { code: 'ECONNREFUSED' }))
         assert.doesNotMatch(refused, /not authori/i, 'or C5 would print the credential remedy for a closed port')
         assert.match(refused, /ECONNREFUSED/)
     })
 
     it('says the MQTT 5 rejection is not a password problem', () => {
-        const described = describeConnectFailure(Object.assign(new Error('unsupported protocol version'), { code: 132 }))
+        const described = describeMqttFailure(Object.assign(new Error('unsupported protocol version'), { code: 132 }))
         assert.match(described, /MQTT 5/)
         assert.doesNotMatch(described, /not authori/i, 'retrying with a different password will never fix this one')
     })
 
     it('quotes nothing at all from an exception it cannot classify', () => {
-        const described = describeConnectFailure(new Error('tls handshake failed for fleet_acme:hunter2@broker.internal'))
+        const described = describeMqttFailure(new Error('tls handshake failed for fleet_acme:hunter2@broker.internal'))
         assert.ok(!described.includes('hunter2'))
         assert.ok(!described.includes('broker.internal'))
-        assert.equal(described, 'the connection failed before CONNACK, with no code this kit can safely quote')
+        assert.equal(described, 'the connection failed with no code this kit can safely quote')
     })
 
     /**
@@ -69,7 +71,7 @@ describe('probe error sanitisation', () => {
         const described = describeFetchFailure(real)
         assert.ok(!described.includes('supersecret'), `the password must not survive: ${described}`)
         assert.ok(!described.includes('fleet.acme.com'), 'and neither does the URL it was embedded in')
-        assert.match(described, /HTTP_PUBLIC_URL/, 'while still naming the variable at fault')
+        assert.match(described, /take the credentials out of it/, 'while still naming the fix')
     })
 
     it('classifies a fetch failure from the cause, and quotes nothing else', () => {
@@ -77,7 +79,7 @@ describe('probe error sanitisation', () => {
             cause: Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:443'), { code: 'ECONNREFUSED' }),
         })
         assert.equal(describeFetchFailure(failed), 'the host refused the connection (ECONNREFUSED)')
-        assert.equal(describeFetchFailure(Object.assign(new Error('t'), { name: 'TimeoutError' })), 'no answer within 5 s')
+        assert.equal(describeFetchFailure(Object.assign(new Error('t'), { name: 'TimeoutError' }), 5_000), 'no answer within 5 s')
     })
 })
 

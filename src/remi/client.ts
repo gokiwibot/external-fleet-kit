@@ -14,6 +14,7 @@ import {
     fleetConfigResponseSchema,
     problemDetailsSchema,
 } from '../contract/schemas'
+import { describeFetchFailure, safeOrigin } from '../net-failure'
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; code: string; message: string }
 
@@ -77,7 +78,21 @@ export function createRemiClient(deps: { baseUrl: string; apiKey: string; fetch?
                 body: body === undefined ? undefined : JSON.stringify(body),
             })
         } catch (error) {
-            return { ok: false, status: 0, code: 'NETWORK', message: error instanceof Error ? error.message : String(error) }
+            /**
+             * CONSTRUCTED, NEVER FORWARDED (controller ruling; see `net-failure.ts`). `fetch` builds
+             * its message out of the request it was given: a `REMI_API_URL` of the form
+             * `https://user:password@host` makes it throw with the WHOLE URL, password included, in
+             * the text. This result's `message` is printed by `efk check` C2 and by `efk start`, so
+             * forwarding it would put that password on screen and into a support email. The origin is
+             * named because it is the thing to check, and `URL.origin` is exactly the part of the URL
+             * that carries no credentials.
+             */
+            return {
+                ok: false,
+                status: 0,
+                code: 'NETWORK',
+                message: `${describeFetchFailure(error)}; reaching ${safeOrigin(base)}`,
+            }
         }
         const text = await response.text()
         let parsedBody: unknown = null

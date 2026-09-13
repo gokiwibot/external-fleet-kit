@@ -224,3 +224,36 @@ describe('remi client', () => {
         assert.deepEqual(sizes, [200, 200], 'the first chunk was sent, the third (after the failure) never was')
     })
 })
+
+/**
+ * The `NETWORK` result, through the REAL `fetch` — no injected double — because the defect being
+ * pinned is what node puts in its own exception, and only node can be the authority on that.
+ * `efk check` C2 and `efk start` both print this `message` (controller ruling: constructed, never
+ * forwarded). The only host is a CLOSED port on 127.0.0.1.
+ */
+describe('a network failure is described, never quoted', () => {
+    const CLOSED = 45_999
+
+    it('does not leak credentials a partner put in REMI_API_URL', async () => {
+        const client = createRemiClient({ baseUrl: `https://remi-user:supersecret@127.0.0.1:${CLOSED}`, apiKey: 'live_sk_x' })
+        const result = await client.getFleetConfig()
+        assert.equal(result.ok, false)
+        assert.equal(!result.ok && result.code, 'NETWORK')
+        const message = (!result.ok && result.message) || ''
+        // node's fetch refuses a URL with userinfo and quotes the WHOLE URL in its message.
+        assert.ok(!message.includes('supersecret'), `the password must not reach C2: ${message}`)
+        assert.ok(!message.includes('remi-user'))
+        assert.match(message, /take the credentials out of it/, 'and it says what to do instead')
+    })
+
+    it('names the origin it could not reach, without the credentials in it', async () => {
+        const client = createRemiClient({ baseUrl: `http://127.0.0.1:${CLOSED}`, apiKey: 'live_sk_x' })
+        const result = await client.getFleetConfig()
+        assert.equal(!result.ok && result.code, 'NETWORK')
+        const message = (!result.ok && result.message) || ''
+        assert.match(message, /the host refused the connection \(ECONNREFUSED\)/)
+        assert.match(message, new RegExp(`reaching http://127\\.0\\.0\\.1:${CLOSED}`), 'the origin is the thing to check')
+        assert.ok(!message.includes('fetch failed'), "node's own text is built over, not passed along")
+        assert.ok(!message.includes('live_sk_x'), 'and the api key never appears anywhere')
+    })
+})

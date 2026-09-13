@@ -325,6 +325,27 @@ describe('mqtt transport', () => {
         assert.equal(await transport.publishState('ACME-0001', state('ACME-0001')), false)
     })
 
+    /**
+     * Controller ruling: no path a user can see may forward the raw message of an mqtt.js exception.
+     * The classifier is pinned against a real mqtt.js throw in `src/transport/mqtt/failure.test.ts`;
+     * this pins the CALL SITE, which is the half that regresses when someone reaches for
+     * `error.message` again because it is right there.
+     */
+    it('never puts the text of an mqtt.js exception into the log, however much it carries', async (t) => {
+        const { broker, messages, start } = setup(t, ['ACME-0001'])
+        // The shape mqtt.js produces for a refused CONNECT, carrying what such a message can carry.
+        broker.policy.failConnect = Object.assign(new Error('Connection refused: Not authorized (user=fleet_acme password=hunter2)'), {
+            code: 5,
+        })
+        await start()
+
+        const log = messages().join('\n')
+        assert.ok(!log.includes('hunter2'), `the broker password must not reach the log: ${log}`)
+        assert.ok(!log.includes('Connection refused:'), "and neither does mqtt.js's own phrasing")
+        assert.match(log, /CONNECT failed \(not authorised/, 'it is described in the kit’s words instead')
+        assert.match(log, /MQTT_USERNAME\/MQTT_PASSWORD/, 'and the credential remedy still fires, which is what the phrase gates')
+    })
+
     it('a denied SUBSCRIBE is reported as an ACL problem, not as a bad credential', async (t) => {
         const { broker, messages, start, transport } = setup(t, ['ACME-0001'])
         broker.policy.denySubscribe = true

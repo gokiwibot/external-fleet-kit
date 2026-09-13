@@ -1,19 +1,20 @@
-/**
- * The Ink TUI. Task 17 replaces the BODY; the signature here is the final one.
- *
- * `onQuit` is how `q` leaves: it calls the single `shutdown()` in `efk start`. It deliberately does
- * NOT raise a synthetic SIGINT — that is a process-wide side effect fired from a UI component, and
- * it fights with anything else the process has installed on that signal.
- */
+import { render } from 'ink'
 import type { EventBus } from '../core/events'
 import type { FleetManager } from '../core/fleet-manager'
+import { App } from './app'
 
-export async function startTui(_opts: {
+/**
+ * Mounts the TUI; the returned function unmounts it. `q` calls `opts.onQuit`, which is `efk start`'s
+ * single `shutdown` — the TUI does not raise a synthetic SIGINT and does not know how the process
+ * ends. `exitOnCtrlC: false` is what lets Ctrl+C go through the same path instead of Ink's own.
+ */
+export async function startTui(opts: {
     bus: EventBus
     manager: FleetManager
     roster: string[]
     demo: boolean
     onQuit: () => void
 }): Promise<() => void> {
-    return () => {}
+    const instance = render(<App bus={opts.bus} manager={opts.manager} demo={opts.demo} onQuit={opts.onQuit} />, { exitOnCtrlC: false })
+    return () => instance.unmount()
 }

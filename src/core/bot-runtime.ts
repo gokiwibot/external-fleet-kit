@@ -75,11 +75,15 @@ export interface BotRuntime {
      * the next command's outcome can take the single `current_command` slot — and it consumes no
      * `seq`, because the state it acknowledges carries none.
      *
-     * ONLY pass a state that `assemble()` has just built. It checks the `bot_id` but not the age:
-     * acknowledging a `lastValidState()` — the stale fallback `GET /bots` serves when the assemble
-     * fails — would not pop the queue head (that status is older) yet would still move the ledger's
-     * `lastPublishedId` BACKWARDS onto a command that has since been superseded, so the slot would
-     * regress to an outcome remi has already seen. Serve the fallback, acknowledge nothing.
+     * ONLY pass a state that `assemble()` has just built. It checks the `bot_id` but not the age, and
+     * a `lastValidState()` — the stale fallback `GET /bots` serves when the assemble fails — is
+     * exactly what must never be passed. Two harms, and the first is the one that bites: that
+     * snapshot is refreshed by every SUCCESSFUL assembly, including a tick whose transport REFUSED
+     * the state, so it can still carry an outcome remi has not seen; acknowledging it pops that
+     * outcome off the queue for a state that never left the process, and remi never learns how the
+     * command it issued ended. The second is that with the queue empty it moves the ledger's
+     * `lastPublishedId` BACKWARDS onto a command that has since been superseded. Serve the fallback,
+     * acknowledge nothing.
      */
     markServed(state: BotState): void
     /**

@@ -89,7 +89,7 @@ class FakeTransport implements Transport {
     }
 }
 
-function harness(remi = fakeRemi(), bus: EventBus = createEventBus()) {
+function harness(remi = fakeRemi(), bus: EventBus = createEventBus(), driverVersionFor: (botId: string) => number = () => 1) {
     const clock = new FakeClock()
     const transport = new FakeTransport()
     const drivers = new Map<string, FakeDriver>()
@@ -107,6 +107,9 @@ function harness(remi = fakeRemi(), bus: EventBus = createEventBus()) {
         },
         driverFor: (botId) => {
             const d = new FakeDriver(botId)
+            // `driverVersion` is the literal 1 on the fake; the start-time gate needs a test that can
+            // make one bot answer something else.
+            Object.assign(d, { driverVersion: driverVersionFor(botId) })
             drivers.set(botId, d)
             return d
         },
@@ -128,6 +131,14 @@ const expired = (id: string): BotCommand => ({
     params: { lat: 33.97, lng: -118.41 },
     issued_at: new Date(1_799_999_000_000).toISOString(),
     expires_at: new Date(1_799_999_900_000).toISOString(),
+})
+
+/** A command the driver accepts, so the bot has something live in the slot. */
+const live = (id: string): BotCommand => ({
+    id,
+    type: 'navigate_to',
+    params: { lat: 33.97, lng: -118.41 },
+    issued_at: new Date(1_799_999_000_000).toISOString(),
 })
 
 describe('fleet manager', () => {
@@ -177,6 +188,26 @@ describe('fleet manager', () => {
         assert.deepEqual(transport.capabilities?.overrides, {
             'ACME-0002': { has_door: false, supported_commands: ['navigate_to', 'cancel_navigation'] },
         })
+    })
+    it('a start that fails builds no fleet, so a retry does not stack a second one', async () => {
+        let badDriver = true
+        const { manager, transport } = harness(fakeRemi(), createEventBus(), (botId) => (badDriver && botId === 'ACME-0002' ? 2 : 1))
+        const first = await manager.start()
+        assert.equal(first.ok === false && first.reason, 'driver_version')
+        assert.deepEqual(manager.bots(), [], 'a start that answered ok: false reports no fleet')
+        assert.equal(manager.driver('ACME-0001'), undefined, 'not even the bot it got as far as building')
+        assert.equal(manager.config(), null, 'and the cached config follows the fleet: there is nothing to describe')
+        assert.equal(transport.started.length, 0, 'the transport was never started')
+
+        badDriver = false
+        const second = await manager.start()
+        assert.deepEqual(second, { ok: true, roster: ['ACME-0001', 'ACME-0002'] }, 'the retry builds exactly one fleet, not one and a half')
+        assert.deepEqual(
+            manager.bots().map((b) => b.botId),
+            ['ACME-0001', 'ACME-0002'],
+        )
+        assert.deepEqual(transport.started, ['ACME-0001', 'ACME-0002'])
+        assert.equal(manager.config()?.namespace, 'acme')
     })
     it('a tick publishes each due state through the transport and closes the tick once', async () => {
         const { manager, transport } = harness()
@@ -262,23 +293,38 @@ describe('fleet manager', () => {
         assert.deepEqual(served, ['ACME-0001', 'ACME-0002'])
         assert.equal(runtime?.currentCommand()?.id, 'J/b', 'answering GET /bots drained the head: the queue moves on')
     })
-    it('serve() hands back the stale fallback without acknowledging it', async () => {
+    it('serve() hands back the stale fallback without acknowledging it, so an outcome that never left stays queued', async () => {
         const { manager, transport, drivers } = harness()
-        transport.delivers = false
+        transport.delivers = false // HTTP polling: the poll is the only delivery there is
         await manager.start()
         assert.ok(transport.handler)
-        await transport.handler('ACME-0001', expired('J/a'))
-        await transport.handler('ACME-0001', expired('J/b'))
-        manager.serve() // one fresh poll, so there is a lastValidState to fall back to
         const runtime = manager.bots()[0]
-        assert.equal(runtime?.currentCommand()?.id, 'J/b')
-
+        assert.ok(runtime)
         const driver = drivers.get('ACME-0001')
         assert.ok(driver)
+
+        // J/a is queued and then really delivered by a poll, so the queue empties behind it.
+        await transport.handler('ACME-0001', expired('J/a'))
+        manager.serve()
+        assert.equal(runtime.currentCommand()?.id, 'J/a')
+
+        // J/b is queued and offered to the transport, which refuses it. remi has NOT seen this
+        // outcome — and the state carrying it is now the bot's last good snapshot.
+        await transport.handler('ACME-0001', expired('J/b'))
+        await manager.tickOnce()
+        assert.equal(runtime.currentCommand()?.id, 'J/b', 'a refused publish leaves the outcome queued')
+
         driver.snap = { ...driver.snap, position: null }
         const answer = manager.serve()
         assert.equal(answer[0]?.stale, true, 'the bot stays in the list, served from its last good state')
-        assert.equal(answer[0]?.state.current_command?.id, 'J/a', 'the fallback is a snapshot of an older moment')
-        assert.equal(runtime?.currentCommand()?.id, 'J/b', 'and acknowledging it would have regressed the slot to an outcome remi has seen')
+        assert.equal(answer[0]?.state.current_command?.id, 'J/b', 'the fallback is a snapshot of an older moment')
+
+        // The proof that the fallback was served and NOT acknowledged: J/b must still be queued, and
+        // the queue outranks the live command in the single slot. Acknowledging the fallback would
+        // have popped J/b for a state that never left the process, and remi would never learn how
+        // the command it issued ended.
+        driver.snap = { ...driver.snap, position: { lat: 33.97, lng: -118.41 } }
+        await transport.handler('ACME-0001', live('J/c'))
+        assert.equal(runtime.currentCommand()?.id, 'J/b', 'the outcome remi never received still owns the slot, ahead of the live command')
     })
 })

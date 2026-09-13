@@ -147,9 +147,14 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
                 answer.push({ botId: runtime.botId, state: result.state, stale: false })
                 continue
             }
-            // NEVER `markServed` the fallback (BotRuntime.markServed): its status is older than the
-            // queue head, so it would pop nothing yet still move the ledger's `lastPublishedId`
-            // backwards onto a command that has since been superseded. Serve it, acknowledge nothing.
+            // NEVER `markServed` the fallback (BotRuntime.markServed). Two distinct harms, and the
+            // first one is the one that bites here: this snapshot is refreshed by every successful
+            // assembly, including a tick whose transport REFUSED the state, so it can carry an
+            // outcome remi has not seen. Acknowledging it would pop that outcome off the queue for a
+            // state that never left the process, and remi would never learn how the command it
+            // issued ended. The second is the one Task 6 documents: with the queue empty it would
+            // move the ledger's `lastPublishedId` backwards onto a superseded command.
+            // Serve it, acknowledge nothing.
             const fallback = runtime.lastValidState()
             if (fallback) answer.push({ botId: runtime.botId, state: fallback, stale: true })
         }
@@ -161,7 +166,6 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
             const fleet = await deps.remi.getFleetConfig()
             if (!fleet.ok)
                 return { ok: false, reason: 'remi_error', detail: `GET /api/v3/fleet → ${fleet.status} ${fleet.code}: ${fleet.message}` }
-            config = fleet.data
             if (fleet.data.transport !== deps.env.transport) {
                 return {
                     ok: false,
@@ -189,6 +193,13 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
                     message: `roster has ${ids.length} bots but max_bots is ${fleet.data.max_bots}; serving the first ${fleet.data.max_bots}`,
                 })
             }
+            // NOTHING below is written to the manager's own state until the whole fleet has been
+            // built. A `start()` that answers `ok: false` must leave the manager exactly as it found
+            // it: `runtimes.push` appends, so a CLI retrying a transient failure would otherwise be
+            // handed a SECOND fleet stacked on the half-built first one, and `bots()` would report a
+            // fleet for a start that failed.
+            const built: BotRuntime[] = []
+            const builtDrivers = new Map<string, RobotDriver>()
             for (const botId of ids.slice(0, fleet.data.max_bots)) {
                 const driver = deps.driverFor(botId)
                 if (driver.driverVersion !== 1)
@@ -197,8 +208,8 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
                         reason: 'driver_version',
                         detail: `driver for ${botId} implements version ${String(driver.driverVersion)}, the kit needs 1`,
                     }
-                drivers.set(botId, driver)
-                runtimes.push(
+                builtDrivers.set(botId, driver)
+                built.push(
                     createBotRuntime({
                         botId,
                         driver,
@@ -223,6 +234,15 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
                     }),
                 )
             }
+
+            // The commit point: from here the start can no longer answer `ok: false`. The fleet has
+            // to be visible BEFORE `transport.start()` subscribes — a broker that has a command
+            // waiting delivers it the moment we subscribe, and an empty `runtimes` would answer that
+            // command with `unknown bot`. `config()` is published here too, so it describes a fleet
+            // that exists rather than a start that failed.
+            runtimes = built
+            for (const [botId, driver] of builtDrivers) drivers.set(botId, driver)
+            config = fleet.data
 
             transport = deps.transportFor(deps.env.transport, fleet.data)
             transport.onCommand(async (botId, command) => {

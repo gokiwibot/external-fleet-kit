@@ -9,13 +9,25 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { EventBus, EventName, KitEvents } from '../core/events'
 import type { FleetManager } from '../core/fleet-manager'
-import { botRows, createModel, reduce, type TuiModel } from '../tui/model'
+import { applyReplay, botRows, createModel, reduce, type TuiModel } from '../tui/model'
 import { PAGE_HTML } from './page'
 
 const SNAPSHOT_EVERY_MS = 2_000
 
 export function createWebApp(deps: { bus: EventBus; manager: FleetManager; demo?: boolean }): Hono & { close(): void } {
-    let model: TuiModel = createModel()
+    /**
+     * Seeded from what the bus buffered BEFORE this dashboard existed, exactly as the TUI does. The
+     * lines that happen first are the ones that explain a start that went wrong — the roster, the
+     * capabilities, the first CONNECT — and the `DEMO MODE` warning itself is among them, so a
+     * dashboard that began at "now" opened with a LOG table that was silent about the one thing it
+     * must never be silent about. `applyReplay` also states the bus's `dropped` count as a line of
+     * its own when the replay buffer overflowed, instead of leaving a gap to be inferred.
+     *
+     * Read BEFORE subscribing, and with nothing awaited in between: `replay()` returns everything
+     * buffered so far, so subscribing first would fold anything emitted between the two statements
+     * twice.
+     */
+    let model: TuiModel = applyReplay(createModel(), deps.bus.replay(), Date.now())
     // Kept so `close()` can drop it: an app that outlives its server and keeps folding every bus
     // event into a model nobody reads is a leak that grows for as long as `efk start` runs.
     const offBus = deps.bus.onAny((name, payload) => {
@@ -36,10 +48,17 @@ export function createWebApp(deps: { bus: EventBus; manager: FleetManager; demo?
     const app = new Hono() as Hono & { close(): void }
     app.close = offBus
     app.get('/', (c) => c.html(PAGE_HTML))
-    app.get('/api/snapshot', (c) => {
-        const { namespace: _ns, demo: _demo, ...rest } = snapshot()
-        return c.json(rest)
-    })
+    /**
+     * SIX keys, `namespace` and `demo` included. An earlier shape stripped both, which put the page
+     * and its own data source in contradiction: `render()` reads `s.demo` to raise the red DEMO
+     * band, and this is the response it renders FIRST — the band then depended entirely on the SSE
+     * snapshot arriving. The window where it does not is narrow (a proxy that blocks SSE, the
+     * browser's per-origin connection limit, a restart) but in it the partner's only cue that
+     * everything on screen is invented is simply absent, and `es.onerror` merely reddens the `h1`
+     * with no text. A contradiction between two pieces of the design resolves in favour of never
+     * letting a partner believe they are talking to remi.
+     */
+    app.get('/api/snapshot', (c) => c.json(snapshot()))
     app.get('/events', (c) =>
         streamSSE(c, async (stream) => {
             let id = 0

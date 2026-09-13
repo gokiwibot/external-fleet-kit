@@ -49,7 +49,42 @@ describe('web dashboard', () => {
         assert.match(await page.text(), /EventSource\('\/events'\)/)
         const snap = await app.request('/api/snapshot')
         assert.equal(snap.status, 200)
-        assert.deepEqual(Object.keys((await snap.json()) as object).sort(), ['bots', 'commands', 'events', 'log'])
+        assert.deepEqual(Object.keys((await snap.json()) as object).sort(), ['bots', 'commands', 'demo', 'events', 'log', 'namespace'])
+    })
+    it('the snapshot carries the demo flag the page needs to raise its red band', async () => {
+        // `page.ts`'s `render()` reads `s.demo` and this is the FIRST thing it renders, before any
+        // SSE has arrived. If the flag were missing here the DEMO band would depend entirely on the
+        // stream connecting — and in demo mode nothing else on the page says the fleet is invented.
+        const demo = createWebApp({ bus: createEventBus(), manager, demo: true })
+        const onSnapshot = (await (await demo.request('/api/snapshot')).json()) as {
+            demo: boolean
+            namespace: string | null
+            bots: unknown[]
+        }
+        assert.equal(onSnapshot.demo, true)
+        // Paired: the rest of the payload is real, so `demo: true` is not all that survived.
+        assert.equal(onSnapshot.namespace, null)
+        assert.deepEqual(onSnapshot.bots, [])
+        demo.close()
+
+        const live = createWebApp({ bus: createEventBus(), manager })
+        const offSnapshot = (await (await live.request('/api/snapshot')).json()) as { demo: boolean }
+        assert.equal(offSnapshot.demo, false)
+        live.close()
+    })
+    it('replays what the bus buffered before it mounted, DEMO MODE warning included', async () => {
+        const bus = createEventBus()
+        // Exactly the order `startWith` runs in: the demo banner is logged long before --web binds.
+        bus.emit('log', { level: 'warn', message: 'DEMO MODE — not connected to remi.' })
+        bus.emit('log', { level: 'info', message: 'fleet started' })
+        const app = createWebApp({ bus, manager, demo: true })
+        const snap = (await (await app.request('/api/snapshot')).json()) as { log: Array<{ level: string; message: string }> }
+        // Newest first, both present, and the levels survived the replay.
+        assert.deepEqual(
+            snap.log.map((l) => `${l.level} ${l.message}`),
+            ['info fleet started', 'warn DEMO MODE — not connected to remi.'],
+        )
+        app.close()
     })
     it('/events is an SSE stream: first a snapshot, then every bus event', async () => {
         const bus = createEventBus()

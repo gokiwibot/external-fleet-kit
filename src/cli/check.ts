@@ -102,13 +102,17 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
             for (const id of ['C3', 'C4'] as const) add(id, 'SKIP', 'demo mode')
         } else if (!fleet.ok) {
             const remedy =
-                fleet.status === 401
-                    ? 'the API key is not valid'
-                    : fleet.status === 403
-                      ? 'the key does not carry the scope `fleet`'
-                      : fleet.status === 404
-                        ? 'Robot.com has not configured your fleet yet (FLEET_NOT_CONFIGURED)'
-                        : `${fleet.status} ${fleet.code}: ${fleet.message}`
+                fleet.status === 0
+                    ? // The commonest C2 failure in the wild, and the only one the generic branch below
+                      // reported as a bare `0 NETWORK: fetch failed` — a verdict with nothing to act on.
+                      `remi is not reachable from this machine (${fleet.message}): check REMI_API_URL and your network`
+                    : fleet.status === 401
+                      ? 'the API key is not valid'
+                      : fleet.status === 403
+                        ? 'the key does not carry the scope `fleet`'
+                        : fleet.status === 404
+                          ? 'Robot.com has not configured your fleet yet (FLEET_NOT_CONFIGURED)'
+                          : `${fleet.status} ${fleet.code}: ${fleet.message}`
             add('C2', 'FAIL', `GET /api/v3/fleet → ${remedy}`)
             for (const id of ['C3', 'C4'] as const) add(id, 'SKIP', 'needs GET /api/v3/fleet')
         } else {

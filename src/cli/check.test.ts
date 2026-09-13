@@ -112,6 +112,15 @@ describe('efk check', () => {
         )
         assert.equal(rule(many, 'C2')?.status, 'WARN', 'above 200 is a warning, not a schema error that stops the fleet')
     })
+    it('C2 names REMI_API_URL when remi is simply not reachable, instead of printing `0 NETWORK`', async () => {
+        // What the client returns for a DNS failure or a typo in the URL — the commonest C2 failure.
+        const report = await runCheck(
+            deps({ remi: remi({ getFleetConfig: async () => ({ ok: false, status: 0, code: 'NETWORK', message: 'fetch failed' }) }) }),
+        )
+        assert.equal(rule(report, 'C2')?.status, 'FAIL')
+        assert.match(rule(report, 'C2')?.message ?? '', /REMI_API_URL/)
+        assert.match(rule(report, 'C2')?.message ?? '', /fetch failed/)
+    })
     it('C2 FAILs when MQTT_USERNAME implies a different namespace than remi reports', async () => {
         // No extra variable in the .env: the credential already encodes it as `fleet_<ns>`.
         const report = await runCheck(

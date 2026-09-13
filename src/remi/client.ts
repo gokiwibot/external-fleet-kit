@@ -122,7 +122,19 @@ export function createRemiClient(deps: { baseUrl: string; apiKey: string; fetch?
                 const page = await call('GET', `/api/v3/fleet/bots${query}`, fleetBotListResponseSchema)
                 if (!page.ok) return page
                 all.push(...page.data.data)
-                cursor = page.data.next_cursor
+                const nextCursor = page.data.next_cursor
+                // Guard against a cursor that comes back unchanged: that is remi (or a proxy in
+                // front of it) never advancing, and without this the kit would re-request the same
+                // page forever, unattended, accumulating bots in memory with no diagnostic.
+                if (nextCursor !== null && nextCursor === cursor) {
+                    return {
+                        ok: false,
+                        status: 0,
+                        code: 'STALLED_CURSOR',
+                        message: `next_cursor did not advance past '${nextCursor}'; stopping instead of looping forever`,
+                    }
+                }
+                cursor = nextCursor
                 if (!cursor) break
             }
             return { ok: true, data: all }

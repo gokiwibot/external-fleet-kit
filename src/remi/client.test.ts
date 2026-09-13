@@ -106,6 +106,24 @@ describe('remi client', () => {
         assert.equal(result.ok && result.data.length, 2)
         assert.equal(calls.length, 2)
     })
+    it('stops instead of looping forever when next_cursor does not advance', async () => {
+        const bot = (id: string) => ({
+            bot_id: id,
+            location_id: 'L',
+            assignable: true,
+            blocked_by: [],
+            state_age_ms: 100,
+            current_job_id: null,
+        })
+        const { fetchFn, calls } = fakeFetch({
+            '/api/v3/fleet/bots?limit=200': () => json({ data: [bot('ACME-0001')], next_cursor: 'stuck' }),
+            '/api/v3/fleet/bots?limit=200&cursor=stuck': () => json({ data: [bot('ACME-0002')], next_cursor: 'stuck' }),
+        })
+        const result = await createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn }).listFleetBots()
+        assert.equal(result.ok, false)
+        assert.equal(!result.ok && result.code, 'STALLED_CURSOR')
+        assert.equal(calls.length, 2, 'must stop after the repeated cursor, never re-request a third time')
+    })
     it('accepts a field remi added that the kit does not know (loose towards remi)', async () => {
         const { fetchFn } = fakeFetch({
             '/api/v3/fleet': () =>
@@ -181,5 +199,28 @@ describe('remi client', () => {
         assert.equal(result.ok, true)
         assert.equal(result.ok && result.data.accepted, 201)
         assert.deepEqual(sizes, [200, 1])
+    })
+    it('a failing chunk stops the push and surfaces that failure, never a fabricated success', async () => {
+        // 401 states -> three chunks of 200, 200, 1. The second chunk fails; the third must never be
+        // sent, and the overall Result must be that failure, not a folded-in partial success.
+        const states = Array.from({ length: 401 }, (_, i) => makeState(i))
+        const sizes: number[] = []
+        const { fetchFn } = fakeFetch({
+            '/api/v3/fleet/state': (call) => {
+                const body = JSON.parse(String(call.init?.body)) as { bots: unknown[] }
+                sizes.push(body.bots.length)
+                if (sizes.length === 2) {
+                    return json(
+                        { type: 'about:blank', title: 'Bad Gateway', status: 502, code: 'UPSTREAM_DOWN', detail: 'remi is unavailable' },
+                        502,
+                    )
+                }
+                return json({ data: { accepted: body.bots.length, rejected: 0 } })
+            },
+        })
+        const result = await createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn }).pushState(states)
+        assert.equal(result.ok, false)
+        assert.equal(!result.ok && result.code, 'UPSTREAM_DOWN')
+        assert.deepEqual(sizes, [200, 200], 'the first chunk was sent, the third (after the failure) never was')
     })
 })

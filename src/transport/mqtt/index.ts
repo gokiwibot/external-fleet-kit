@@ -80,6 +80,11 @@ export function createMqttTransport(
     const open = async (slot: Slot) => {
         const botId = slot.runtime.botId
         slot.connecting = true
+        // What the catch below is allowed to claim failed. CONNECT and SUBSCRIBE report themselves
+        // (a rejected promise, a SubscriptionDeniedError); the capabilities publish happens on a
+        // connection that is already up, and saying "CONNECT failed" about it sends the partner to
+        // debug the wrong layer — the credentials are fine, the ACL on one topic is not.
+        let stage: 'connect' | 'capabilities' = 'connect'
         const connection = factory({
             url: deps.url,
             username: deps.username,
@@ -121,6 +126,7 @@ export function createMqttTransport(
             // publishes anyway (`lastPublishedAtMs === null`).
             slot.runtime.touch()
             if (!capabilitiesPublished && capabilities) {
+                stage = 'capabilities'
                 await connection.publish(fleetCapabilitiesTopic(deps.namespace), capabilities, { qos: 1, retain: true })
                 capabilitiesPublished = true
             }
@@ -132,8 +138,14 @@ export function createMqttTransport(
             await connection.end().catch(() => {})
             const wait = scheduleRetry(slot)
             const message = error instanceof Error ? error.message : String(error)
-            // Three failures that look alike in a log and have nothing else in common.
-            if (error instanceof SubscriptionDeniedError) {
+            // Four failures that look alike in a log and have nothing else in common.
+            if (stage === 'capabilities') {
+                log(
+                    'error',
+                    `connected, but publishing the fleet capabilities document failed (${message}); dropping the connection and retrying in ${wait} ms — CONNECT and the command subscription both succeeded, so check that ${deps.username} may publish to ${fleetCapabilitiesTopic(deps.namespace)}`,
+                    botId,
+                )
+            } else if (error instanceof SubscriptionDeniedError) {
                 log(
                     'error',
                     `connected, but the broker refused the command subscription (${error.topic}); retrying in ${wait} ms — the credential is fine, its ACL is not: ask Robot.com to allow fleet/${deps.namespace}/bot/+/command for user ${deps.username}`,

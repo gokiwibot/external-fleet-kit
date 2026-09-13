@@ -5,8 +5,13 @@
     "license": "SEE LICENSE IN LICENSE",
     "type": "module",
     "private": true,
-    "engines": { "node": ">=22.0.0", "pnpm": ">=9" },
-    "bin": { "efk": "./bin/efk.mjs" },
+    "engines": {
+        "node": ">=22.0.0",
+        "pnpm": ">=9"
+    },
+    "bin": {
+        "efk": "./bin/efk.mjs"
+    },
     "scripts": {
         "efk": "tsx src/cli/index.ts",
         "start": "tsx src/cli/index.ts start",
@@ -31,7 +36,6 @@
         "@biomejs/biome": "^2.2.0",
         "@types/node": "^22.10.0",
         "@types/react": "19.2.7",
-        "aedes": "^0.51.3",
         "tsx": "^4.21.0",
         "typescript": "^5.9.0"
     }

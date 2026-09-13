@@ -1,20 +1,21 @@
 /**
  * The MQTT transport against a broker double.
  *
- * WHY NOT `aedes`, WHICH THE PLAN ASKED FOR: the kit connects with `protocolVersion: 5` and nothing
- * else (ruling R2), and `aedes` — 0.51.3, the pinned series, and 1.1.2, the latest stable — answers
- * an MQTT 5 CONNECT with CONNACK return code 1, "unacceptable protocol version"
- * (`lib/handlers/connect.js`: `if (packet.protocolVersion < 3 || packet.protocolVersion > 4)`).
- * Verified by hand against 0.51.3 before writing a line of this file: every single connection is
- * refused, so an `aedes` version of these tests would assert the transport's backoff path and
- * nothing else. Only `aedes@2.0.0-beta.1` (branch `mqttv5`) speaks MQTT 5, and bumping a public
- * repo's devDependency onto a beta is not this task's call — see the task report.
+ * WHY A DOUBLE AND NOT AN IN-PROCESS BROKER: the kit connects with `protocolVersion: 5` and nothing
+ * else (ruling R2), and `aedes` — which the plan named, and which this repo carried as a
+ * devDependency until this task removed it — answers an MQTT 5 CONNECT with CONNACK return code 1,
+ * "unacceptable protocol version", in 0.51.x and in 1.x alike (`lib/handlers/connect.js`:
+ * `if (packet.protocolVersion < 3 || packet.protocolVersion > 4)`). Verified against the installed
+ * 0.51.3 before a line of this file was written: every connection is refused, so an `aedes` suite
+ * would assert the backoff path five times over and nothing else. Only `aedes@2.0.0-beta.1` (branch
+ * `mqttv5`) speaks MQTT 5, and a repo partners clone should not depend on a beta broker. Do not
+ * re-add it expecting MQTT 5.
  *
  * So the transport's own injection point takes the broker's place, and everything below the wire is
  * asserted here: client ids, QoS, retain flags, the command subscription, the ACL/credential/
  * protocol split, the link policy, the backoff and the recovery. The wire itself — a real MQTT 5
- * CONNECT, retained state seen by a late subscriber, a real drop and reconnect — was checked by hand
- * against a local `mosquitto`; the transcript is in the task report.
+ * CONNECT, a retained state seen by a late subscriber, a real drop and reconnect — is covered by
+ * `mqtt-broker.test.ts`, which runs against a real broker when `EFK_MQTT_URL` is set.
  */
 import assert from 'node:assert/strict'
 import { describe, it, type TestContext } from 'node:test'
@@ -32,7 +33,7 @@ const NS = 'acme'
 type Sent = { topic: string; payload: unknown; qos: 0 | 1 | 2; retain: boolean }
 
 /** What the double does to the connections opened from now on. */
-type BrokerPolicy = { failConnect?: unknown; denySubscribe?: boolean; grantedQos?: number }
+type BrokerPolicy = { failConnect?: unknown; denySubscribe?: boolean; grantedQos?: number; denyPublishTo?: string }
 
 class FakeConnection implements MqttConnection {
     ends = 0
@@ -55,6 +56,7 @@ class FakeConnection implements MqttConnection {
 
     async publish(topic: string, payload: unknown, { qos, retain }: { qos: 0 | 1 | 2; retain: boolean }) {
         if (!this.connected) throw new Error('not connected')
+        if (this.policy().denyPublishTo === topic) throw new Error(`not authorized to publish to ${topic}`)
         this.sent.push({ topic, payload, qos, retain })
     }
 
@@ -305,6 +307,22 @@ describe('mqtt transport', () => {
         assert.match(refusals[0]?.message ?? '', /EMQX 5/)
         assert.match(refusals[0]?.message ?? '', /retrying in 1000 ms/)
         assert.doesNotMatch(messages().join('\n'), /MQTT_USERNAME\/MQTT_PASSWORD/, 'the credential is fine; the broker is the problem')
+    })
+
+    it('a capabilities publish that fails says so, instead of blaming CONNECT', async (t) => {
+        const { broker, messages, start, transport } = setup(t, ['ACME-0001'])
+        broker.policy.denyPublishTo = fleetCapabilitiesTopic(NS)
+        // Known before the first connection, so the document travels inside open() — where a failure
+        // used to be reported as "CONNECT failed" on a CONNECT that had plainly succeeded.
+        await transport.publishCapabilities(CAPABILITIES)
+        await start()
+
+        assert.match(messages().join('\n'), /publishing the fleet capabilities document failed/)
+        assert.match(messages().join('\n'), /CONNECT and the command subscription both succeeded/)
+        assert.match(messages().join('\n'), /may publish to fleet\/acme\/capabilities/)
+        assert.doesNotMatch(messages().join('\n'), /CONNECT failed/, 'CONNECT did not fail; saying so sends the partner to the wrong layer')
+        assert.deepEqual(broker.live, [], 'the connection is dropped and retried through the backoff')
+        assert.equal(await transport.publishState('ACME-0001', state('ACME-0001')), false)
     })
 
     it('a denied SUBSCRIBE is reported as an ACL problem, not as a bad credential', async (t) => {

@@ -29,4 +29,24 @@ describe('backoff', () => {
             1_200,
         )
     })
+
+    it('never waits longer than the cap, jitter included', () => {
+        // The jitter must not push the wait OVER the ceiling the contract states: at the cap the
+        // spread is 48 s – 60 s, not 48 s – 72 s.
+        assert.equal(
+            nextBackoffMs(10, () => 1),
+            60_000,
+        )
+        assert.equal(
+            nextBackoffMs(10, () => 0),
+            48_000,
+        )
+        for (let attempt = 0; attempt <= 40; attempt += 1) {
+            for (const roll of [0, 0.25, 0.5, 0.75, 1]) {
+                const wait = nextBackoffMs(attempt, () => roll)
+                assert.ok(wait <= 60_000, `attempt ${attempt} with roll ${roll} waited ${wait} ms`)
+                assert.ok(wait >= 800, `attempt ${attempt} with roll ${roll} waited ${wait} ms, which is a tight loop`)
+            }
+        }
+    })
 })

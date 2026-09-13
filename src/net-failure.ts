@@ -123,3 +123,34 @@ export function describeThrown(error: unknown): string {
     const kind = error instanceof Error ? error.name : typeof error
     return `${kind}, with no code this kit can safely quote`
 }
+
+/**
+ * The stack frames of an error, with its message removed EXACTLY rather than heuristically.
+ *
+ * A bug report needs the frames — file paths and function names out of this repo — but `Error.stack`
+ * BEGINS with the message, which is the one thing the rule above keeps out. The first version of
+ * this filtered for lines matching `/^\s+at /`, and a reviewer defeated it in one line: an error
+ * whose MESSAGE contains `"\n    at fake-frame (password=…)"` has a message line that matches the
+ * frame pattern, so the pattern kept it and the credential printed as though it were a frame.
+ *
+ * That is the same defect this plan has now hit three times — a guard that matches a pattern admits
+ * whatever coincidentally matches the pattern — and it has the same answer as the `efk check`
+ * remedies did: make the exclusion STRUCTURAL instead of heuristic. `stack` starts with a header of
+ * the form `<name>: <message>`, so the message can be removed by its own length. A multi-line
+ * message is then excluded in full, by construction, and no pattern is consulted.
+ *
+ * When the message cannot be located in the header — a runtime that formats `stack` differently, a
+ * custom error that overwrote it — this returns NOTHING rather than guessing which part is safe.
+ * Losing the frames is a worse bug report; leaking a credential is a worse day.
+ */
+export function stackFramesWithoutMessage(error: unknown): string {
+    if (!(error instanceof Error) || typeof error.stack !== 'string') return ''
+    const { stack, message } = error
+    const start = stack.indexOf(message)
+    // It must be the HEADER's copy of the message: anything before it is `<name>: `, which has no
+    // newline in it. A message found only further down is a coincidence in a frame, not the header.
+    if (start === -1 || stack.slice(0, start).includes('\n')) return ''
+    const afterMessage = stack.slice(start + message.length)
+    const firstBreak = afterMessage.indexOf('\n')
+    return firstBreak === -1 ? '' : afterMessage.slice(firstBreak + 1)
+}

@@ -5,7 +5,7 @@ import { loadConfig } from '../config'
 import { CONTRACT_VERSION } from '../contract/version'
 import { createFakeRemiClient } from '../core/fake-remi'
 import { listScenarios, SCENARIO_NOTES } from '../driver/simulated'
-import { describeThrown } from '../net-failure'
+import { describeThrown, stackFramesWithoutMessage } from '../net-failure'
 import { createRemiClient } from '../remi/client'
 import { formatReport, runCheck } from './check'
 import { loadEnv } from './env'
@@ -166,16 +166,15 @@ main().then(
          * the same shape the `parseArgs` handler above was fixed for, and the same credential problem
          * every other path was fixed for, since `Error.stack` BEGINS with the message.
          *
-         * So the sentence is constructed, and then the FRAMES are printed without it: file paths and
-         * function names out of this repo, which is what makes a bug report actionable, and none of
-         * the text a library built out of its connection options. Dropping the diagnostic entirely
-         * would trade one defect for another.
+         * So the sentence is constructed, and the frames are printed with the message removed by
+         * `stackFramesWithoutMessage` — EXACTLY, by length, never by matching what a frame looks
+         * like. See that function for the counter-example that killed the pattern-matching version.
          */
         console.error(
             `efk hit an error it does not handle: ${describeThrown(error)}. This is a bug in the kit — send Robot.com the lines below.`,
         )
-        const frames = (error instanceof Error && error.stack ? error.stack.split('\n') : []).filter((line) => /^\s+at /.test(line))
-        if (frames.length > 0) console.error(frames.join('\n'))
+        const frames = stackFramesWithoutMessage(error)
+        if (frames) console.error(frames)
         process.exit(1)
     },
 )

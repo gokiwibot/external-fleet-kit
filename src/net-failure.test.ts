@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { describeFetchFailure, safeOrigin } from './net-failure'
+import { describeFetchFailure, safeOrigin, stackFramesWithoutMessage } from './net-failure'
 
 /** A closed port that is still a legal HTTP port — node rejects port 1 as "bad port" before connecting. */
 const CLOSED = 45_999
@@ -76,5 +76,58 @@ describe('safeOrigin', () => {
     it('does not echo back something that is not a URL', () => {
         assert.equal(safeOrigin('user:supersecret@nonsense'), 'the configured URL')
         assert.ok(!safeOrigin('user:supersecret@nonsense').includes('supersecret'))
+    })
+})
+
+/**
+ * The last-resort handler in `cli/index.ts` prints stack FRAMES so a bug report is actionable, and
+ * `Error.stack` begins with the message — the one thing the credential rule keeps out.
+ *
+ * The first version filtered for lines matching `/^\s+at /`. A reviewer defeated it: an error whose
+ * MESSAGE contains a line that itself looks like a frame survives the pattern and prints. The tests
+ * below encode that counter-example rather than the happy path, because the happy path is exactly
+ * what the broken version also passed. Every error here is real, with a real stack from this file.
+ */
+describe('stackFramesWithoutMessage', () => {
+    it('excludes a message that contains a line looking exactly like a stack frame', () => {
+        // THE COUNTER-EXAMPLE. Reproduced against the old filter: the password printed as a frame.
+        const error = new Error('connect refused\n    at fake-frame (password=hunter2)')
+        assert.match(error.stack ?? '', /hunter2/, 'precondition: the stack really does carry it')
+
+        const frames = stackFramesWithoutMessage(error)
+        assert.ok(!frames.includes('hunter2'), `the credential must not survive: ${frames}`)
+        assert.ok(!frames.includes('fake-frame'), 'nor the line that was pretending to be a frame')
+        assert.match(frames, /net-failure\.test\.ts/, 'while the real frames are still there to report')
+    })
+
+    it('keeps the real frames of an ordinary error and none of its message', () => {
+        const error = new Error('Connection refused: Not authorized (password=hunter2)')
+        const frames = stackFramesWithoutMessage(error)
+        assert.ok(!frames.includes('hunter2'))
+        assert.ok(!frames.includes('Connection refused'))
+        assert.match(frames, /at /, 'frames survive')
+        assert.match(frames, /net-failure\.test\.ts/)
+    })
+
+    it('prints nothing rather than guessing when the stack does not start with the message', () => {
+        // Some runtimes format `stack` differently, and a custom error can overwrite it. Losing the
+        // frames is a worse bug report; leaking a credential is a worse day.
+        const overwritten = new Error('boom')
+        Object.defineProperty(overwritten, 'stack', { value: 'totally different header\n    at somewhere (x.ts:1:1)' })
+        assert.equal(stackFramesWithoutMessage(overwritten), '')
+    })
+
+    it('does not mistake a message that appears further down the stack for the header', () => {
+        const misleading = new Error('deep')
+        Object.defineProperty(misleading, 'stack', { value: 'Error: other\n    at handler (deep.ts:1:1)' })
+        assert.equal(stackFramesWithoutMessage(misleading), '', 'the match has to be the header, not a coincidence in a frame')
+    })
+
+    it('returns nothing for a thrown value that is not an Error, or one with no stack', () => {
+        assert.equal(stackFramesWithoutMessage('just a string'), '')
+        assert.equal(stackFramesWithoutMessage(null), '')
+        const stackless = new Error('x')
+        Object.defineProperty(stackless, 'stack', { value: undefined })
+        assert.equal(stackFramesWithoutMessage(stackless), '')
     })
 })

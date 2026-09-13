@@ -44,13 +44,21 @@ describe('destinations', () => {
         const r = inward.resolve({ lat: 0.0024, lng: 0 })
         assert.equal(r.kind, 'ok', 'the grid node is inside the area, so the destination is reachable')
         assert.deepEqual(r.kind === 'ok' && r.corrected, { lat: 0.002, lng: 0 })
+        // Pinned, not just `.kind`: this is the size of the snap, requested (0.0024°) to corrected (0.002°).
+        assert.equal(r.kind === 'ok' && r.distanceM, 44.5, `got ${r.kind === 'ok' && r.distanceM}`)
 
         // And the reverse: 0.0026° ≈ 289 m (inside a 300 m area) snaps UP to 0.003° ≈ 334 m (outside).
         const outward = createDestinations(
             botScenarioSchema.parse({ destinations: { snapGridDeg: 0.001, unreachableBeyondM: 300 } }).destinations,
             origin,
         )
-        assert.equal(outward.resolve({ lat: 0.0026, lng: 0 }).kind, 'unreachable')
+        const or = outward.resolve({ lat: 0.0026, lng: 0 })
+        assert.equal(or.kind, 'unreachable')
+        // Pinned: the basis is the CORRECTED point (≈ 333.6 m from origin), never the raw target
+        // (≈ 289.1 m) — using the raw target here would report a NEGATIVE distance (≈ -10.9), which
+        // the contract's `correction_distance_m: z.number().min(0)` forbids.
+        assert.equal(or.kind === 'unreachable' && or.distanceM, 33.6, `got ${or.kind === 'unreachable' && or.distanceM}`)
+        assert.ok(or.kind === 'unreachable' && or.distanceM >= 0, 'correction_distance_m must never be negative')
     })
     it('validate is idempotent: the SAME coordinate gives the same answer no matter where the bot is', () => {
         // The bot is not an input at all — that is the property under test, so it must be visible.

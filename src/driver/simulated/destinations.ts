@@ -11,8 +11,16 @@
  *
  * `distanceM` has ONE definition in both branches: the distance from the REQUESTED destination to the
  * nearest navigable point. Reachable → that point is the grid node, so it is the size of the snap.
- * Unreachable → that point is the closest one inside the service area, on the line origin→target at
- * `unreachableBeyondM` from the origin, so it is how far past the edge the request fell.
+ * Unreachable → that point is the closest one inside the service area, on the line origin→CORRECTED
+ * point at `unreachableBeyondM` from the origin, so it is how far past the edge the request fell.
+ *
+ * BASIS, deliberately: the overshoot is measured from the CORRECTED (snapped) point, not the raw
+ * target. The reachability check already measures `origin → corrected` (order matters: snap first),
+ * so reporting the overshoot from anything else — in particular from the raw target — can disagree
+ * with that check and go negative: snapping can push a point that was inside the raw threshold to
+ * outside the corrected one (or the reverse), and the contract types this field `z.number().min(0)`.
+ * The corrected point is also the one the robot actually drives to, so it is the honest number to
+ * report to the partner, not just the one that happens to stay non-negative.
  */
 import type { DestinationValidation } from '../../contract/schemas'
 import type { Position } from '../robot-driver'
@@ -37,9 +45,10 @@ export function createDestinations(spec: BotScenario['destinations'], origin: Po
         if (spec.unreachableBeyondM > 0) {
             const fromOrigin = metersBetween(origin, corrected)
             if (fromOrigin > spec.unreachableBeyondM) {
-                // Distance from the REQUESTED point to the nearest navigable one, which sits on the
-                // edge of the service disc along the same bearing.
-                return { kind: 'unreachable', distanceM: round1(metersBetween(origin, target) - spec.unreachableBeyondM) }
+                // Same basis as the check above (`fromOrigin`, measured to the CORRECTED point): the
+                // nearest navigable point sits on the edge of the service disc along that bearing, so
+                // reusing `fromOrigin` here is what keeps the overshoot from ever going negative.
+                return { kind: 'unreachable', distanceM: round1(fromOrigin - spec.unreachableBeyondM) }
             }
         }
         return { kind: 'ok', corrected, distanceM: spec.snapGridDeg > 0 ? round1(metersBetween(target, corrected)) : 0 }

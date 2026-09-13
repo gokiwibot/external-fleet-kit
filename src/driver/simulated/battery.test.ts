@@ -35,4 +35,14 @@ describe('battery', () => {
         const off = createBattery(botScenarioSchema.parse({ battery: { startPct: 5 } }).battery)
         assert.equal(off.unavailable(), false)
     })
+    it('the threshold boundary itself is on the AVAILABLE side: exactly at it is not unavailable, only strictly below it is', () => {
+        const spec = botScenarioSchema.parse({ battery: { startPct: 32, drainPctPerKm: 1, unavailableBelowPct: 30 } }).battery
+        const b = createBattery(spec)
+        b.advance(2_000, 250, true)
+        assert.equal(b.percentage(), 30)
+        assert.equal(b.unavailable(), false, 'exactly at the threshold: "unavailable BELOW" does not include equal')
+        b.advance(1_000, 250, true)
+        assert.equal(b.percentage(), 29)
+        assert.equal(b.unavailable(), true, 'one point past the threshold: now strictly below it')
+    })
 })

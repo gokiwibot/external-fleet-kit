@@ -58,11 +58,12 @@ const BLOCKED_HELP: Record<string, string> = {
 /**
  * C8's parity call, which must not be able to take the command down with it.
  *
- * `runParityInProcess` (Task 2) THROWS rather than returning a failed result when an expectation
- * names a sample file that is not on disk, or when SOURCE.json has no `files` key — which is exactly
- * the shape of the mis-synced clone C8 exists to diagnose. Its own test catches the throw, so nothing
- * noticed. A partner running the very first command we ask them to run must get the remedy, not a
- * stack trace, so a throw becomes the same FAIL with the same remedy.
+ * `runParityInProcess` used to THROW rather than return a failed result when an expectation named a
+ * sample file that was not on disk, or when SOURCE.json had no `files` key — exactly the shape of the
+ * mis-synced clone C8 exists to diagnose. That is fixed at the root now (the runner reports), and
+ * this stays as a belt: `parity` is an injected dependency, so the next implementation of it — the
+ * real probe, a partner's fork — must not be able to take the command down either. A partner running
+ * the very first command we ask them to run gets the remedy, never a stack trace.
  */
 async function runParity(parity: CheckDeps['parity']): Promise<{ ok: boolean; detail: string }> {
     try {
@@ -112,7 +113,7 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                         ? 'the key does not carry the scope `fleet`'
                         : fleet.status === 404
                           ? 'Robot.com has not configured your fleet yet (FLEET_NOT_CONFIGURED)'
-                          : `${fleet.status} ${fleet.code}: ${fleet.message}`
+                          : `${fleet.status} ${fleet.code}: ${fleet.message} — an answer this kit does not know how to read; retry, and if it persists send Robot.com this whole line together with your REMI_API_URL`
             add('C2', 'FAIL', `GET /api/v3/fleet → ${remedy}`)
             for (const id of ['C3', 'C4'] as const) add(id, 'SKIP', 'needs GET /api/v3/fleet')
         } else {
@@ -122,8 +123,11 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
             // mismatch, and then the namespace one, one round trip at a time.
             const fails: string[] = []
             const warns: string[] = []
-            if (cfg.transport !== env.REMI_TRANSPORT)
-                fails.push(`remi expects transport ${cfg.transport}, your .env says ${env.REMI_TRANSPORT}`)
+            if (cfg.transport !== env.REMI_TRANSPORT) {
+                fails.push(
+                    `remi expects transport ${cfg.transport}, your .env says ${env.REMI_TRANSPORT}: set REMI_TRANSPORT to \`${cfg.transport}\`, or ask Robot.com to switch your fleet to ${env.REMI_TRANSPORT} — the two have to agree before anything else works`,
+                )
+            }
             if (env.REMI_TRANSPORT === 'mqtt' && env.MQTT_USERNAME) {
                 // No new variable in the .env for this: the namespace is derivable from the credential
                 // the partner already has (`fleet_<ns>`), and remi is the authority on the real value.
@@ -155,7 +159,11 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
 
             const list = await deps.remi.listFleetBots()
             if (!list.ok) {
-                add('C3', 'FAIL', `GET /api/v3/fleet/bots → ${list.status} ${list.code}`)
+                add(
+                    'C3',
+                    'FAIL',
+                    `GET /api/v3/fleet/bots → ${list.status} ${list.code} — the same key just read your fleet, so this is not the key: retry, and if it persists send Robot.com this line`,
+                )
                 add('C4', 'SKIP', 'needs the roster')
             } else {
                 const bots = list.data
@@ -176,7 +184,9 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                         `bot ids outside the prefix/grammar: ${bad.join(', ')} — a provisioning bug on our side, tell Robot.com`,
                     )
                 if (bots.length > cfg.max_bots)
-                    rosterWarns.push(`${bots.length} bots but max_bots is ${cfg.max_bots}; only the first ${cfg.max_bots} will run`)
+                    rosterWarns.push(
+                        `${bots.length} bots but max_bots is ${cfg.max_bots}; only the first ${cfg.max_bots} will run — ask Robot.com to raise max_bots, or retire the bots you are not testing with`,
+                    )
                 if (unplaced.length) rosterWarns.push(`Robot.com has not placed ${unplaced.join(', ')} in your sandbox location yet`)
                 if (elsewhere.length)
                     rosterWarns.push(
@@ -241,7 +251,12 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                     `your server is not reachable even from this machine (${probe.error}); expose HTTP_PORT with a tunnel or a deployment`,
                 )
             else if (probe.status === 401) add('C6', 'FAIL', 'HTTP_TOKEN in the .env does not match the token the server runs with')
-            else if (probe.status !== 200) add('C6', 'FAIL', `GET ${env.HTTP_PUBLIC_URL}/bots → ${probe.status}`)
+            else if (probe.status !== 200)
+                add(
+                    'C6',
+                    'FAIL',
+                    `GET ${env.HTTP_PUBLIC_URL}/bots → ${probe.status} — something other than the kit answered at HTTP_PUBLIC_URL: check it points at the port \`efk start\` listens on and that no proxy or error page sits in front of it`,
+                )
             else {
                 const bots = (probe.body as { bots?: unknown[] } | undefined)?.bots
                 const expectedCount = roster.length > 0 ? roster.length : null
@@ -263,11 +278,24 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
             add('C6', 'SKIP', 'transport variables missing (see C1)')
         }
 
-        const deliveries = await deps.remi.listDeliveries(1)
-        if (deliveries.ok) add('C7', 'PASS', 'the key carries `delivery`: efk order is available')
-        else if (deliveries.status === 403)
-            add('C7', 'WARN', 'the key does not carry `delivery`; you can simulate but not create test orders — ask Robot.com')
-        else add('C7', 'WARN', `GET /api/v3/delivery/ → ${deliveries.status} ${deliveries.code}`)
+        if (deps.demo) {
+            // The rule C2's demo FAIL exists to prevent, arriving through the back door: in demo mode
+            // `listDeliveries` is answered from memory, so a PASS here would tell a partner their key
+            // carries the `delivery` scope when nothing was verified at all. They would find out when
+            // a real `efk order` fails — with the one tool meant to catch it having already said yes.
+            add('C7', 'SKIP', 'demo mode')
+        } else {
+            const deliveries = await deps.remi.listDeliveries(1)
+            if (deliveries.ok) add('C7', 'PASS', 'the key carries `delivery`: efk order is available')
+            else if (deliveries.status === 403)
+                add('C7', 'WARN', 'the key does not carry `delivery`; you can simulate but not create test orders — ask Robot.com')
+            else
+                add(
+                    'C7',
+                    'WARN',
+                    `GET /api/v3/delivery/ → ${deliveries.status} ${deliveries.code} — the delivery probe did not answer, so \`efk order\` may not work; retry, and if it persists ask Robot.com about the scopes on your key`,
+                )
+        }
     }
 
     const parity = await runParity(deps.parity)
@@ -308,10 +336,14 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                 }
                 const caps = driver.capabilities()
                 if (caps.hasDoor && !caps.supportedCommands.includes('set_door')) {
-                    c9Warns.push(`${botId}: declares a door but not set_door — remi will send set_door and you will reject it`)
+                    c9Warns.push(
+                        `${botId}: declares a door but not set_door — remi will send set_door and you will reject it; add set_door to the driver's supportedCommands, or report hasDoor: false`,
+                    )
                 }
             } catch (error) {
-                c9Fails.push(`${botId}: driver factory threw: ${error instanceof Error ? error.message : String(error)}`)
+                c9Fails.push(
+                    `${botId}: driver factory threw: ${error instanceof Error ? error.message : String(error)} — that error comes from the \`driver\` factory in your efk.config.ts, not from the kit; efk start would fail on the same bot`,
+                )
             }
         }
         // Scenario overrides keyed on a bot that is not in the roster do nothing at all, which looks

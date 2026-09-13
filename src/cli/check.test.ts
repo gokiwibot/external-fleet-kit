@@ -294,94 +294,202 @@ describe('efk check', () => {
     })
     /**
      * The whole product value of this command: a verdict a partner cannot act on is worth nothing.
-     * Every rule that is not PASS must carry something to DO, and nothing printed may be a secret —
-     * the .env behind this report holds an API key, a broker password and a bearer token.
+     *
+     * THE CORPUS IS THE POINT. Not a sample of rules — one case per FAIL/WARN branch `check.ts` can
+     * emit, named after the branch it reaches, so a message added or reworded without a remedy fails
+     * HERE instead of shipping. The same pass asserts that nothing printed is a secret: the `.env`
+     * behind these reports holds an API key, a broker password and a bearer token.
      */
-    it('every non-PASS rule carries a remedy, and no rule ever prints a secret', async () => {
-        const secrets = { key: `live_sk_${'a'.repeat(48)}`, password: 'br0ker-s3cret', token: 'T'.repeat(40) }
-        const env = loadEnv({ ...envSource, REMI_API_KEY: secrets.key, MQTT_PASSWORD: secrets.password, HTTP_TOKEN: secrets.token })
-        const httpEnv = loadEnv({
-            ...envSource,
-            REMI_TRANSPORT: 'http',
-            HTTP_TOKEN: secrets.token,
-            HTTP_PUBLIC_URL: 'https://fleet.acme.test',
-        })
-        const blockedRoster = remi({
-            listFleetBots: async () => ({
-                ok: true,
-                data: [
+    const secrets = { key: `live_sk_${'a'.repeat(48)}`, password: 'br0ker-s3cret', token: 'T'.repeat(40) }
+    const secretSource = { ...envSource, REMI_API_KEY: secrets.key, MQTT_PASSWORD: secrets.password, HTTP_TOKEN: secrets.token }
+    const envOf = (source: Record<string, string>) => {
+        const parsed = loadEnv(source)
+        return parsed.ok ? parsed.env : null
+    }
+    const mqttEnv = envOf(secretSource)
+    const httpEnv = envOf({ ...secretSource, REMI_TRANSPORT: 'http', HTTP_PUBLIC_URL: 'https://fleet.acme.test' })
+    const httpFleet = (over: Partial<RemiClient> = {}) =>
+        remi({ getFleetConfig: async () => ({ ok: true, data: { ...config, transport: 'http' } }), ...over })
+    const roster = (...bots: Array<ReturnType<typeof mirror>>) => remi({ listFleetBots: async () => ({ ok: true, data: bots }) })
+    const badDriver = (make: (botId: string) => FakeDriver) => ({ driver: make, fleet: { supportsCommandInterrupt: true } })
+
+    /** One entry per branch that can produce a FAIL or a WARN. Keep it exhaustive. */
+    const corpus: Array<[string, Partial<Parameters<typeof runCheck>[0]>]> = [
+        ['C1 unparseable .env', { env: null, envError: 'REMI_API_KEY: expected live_sk_ followed by 48 hex characters' }],
+        ['C1 empty MQTT_PASSWORD', { env: envOf({ ...secretSource, MQTT_PASSWORD: '' }) }],
+        ['C2 demo mode', { demo: true }],
+        [
+            'C2 remi unreachable',
+            { remi: remi({ getFleetConfig: async () => ({ ok: false, status: 0, code: 'NETWORK', message: 'fetch failed' }) }) },
+        ],
+        ['C2 401', { remi: remi({ getFleetConfig: async () => ({ ok: false, status: 401, code: 'UNAUTHORIZED', message: '' }) }) }],
+        ['C2 403', { remi: remi({ getFleetConfig: async () => ({ ok: false, status: 403, code: 'FORBIDDEN', message: '' }) }) }],
+        ['C2 404', { remi: remi({ getFleetConfig: async () => ({ ok: false, status: 404, code: 'FLEET_NOT_CONFIGURED', message: '' }) }) }],
+        [
+            'C2 unexpected status',
+            { remi: remi({ getFleetConfig: async () => ({ ok: false, status: 502, code: 'BAD_GATEWAY', message: 'upstream said no' }) }) },
+        ],
+        ['C2 transport mismatch', { remi: httpFleet() }],
+        [
+            'C2 namespace mismatch',
+            { remi: remi({ getFleetConfig: async () => ({ ok: true, data: { ...config, namespace: 'other_partner' } }) }) },
+        ],
+        [
+            'C2 contract drift + max_bots above the tested ceiling',
+            { remi: remi({ getFleetConfig: async () => ({ ok: true, data: { ...config, contract_version: '2027-01', max_bots: 500 } }) }) },
+        ],
+        [
+            'C2 base_url not https',
+            {
+                env: httpEnv,
+                remi: httpFleet({
+                    getFleetConfig: async () => ({ ok: true, data: { ...config, transport: 'http', base_url: 'http://fleet.acme.test' } }),
+                }),
+            },
+        ],
+        [
+            'C3 roster call failed',
+            { remi: remi({ listFleetBots: async () => ({ ok: false, status: 500, code: 'INTERNAL', message: '' }) }) },
+        ],
+        ['C3 no bots registered', { remi: roster() }],
+        ['C3 ids outside the grammar', { remi: roster(mirror('acme/1')) }],
+        [
+            'C3 more bots than max_bots',
+            {
+                remi: remi({
+                    getFleetConfig: async () => ({ ok: true, data: { ...config, max_bots: 1 } }),
+                    listFleetBots: async () => ({ ok: true, data: [mirror('ACME-0001'), mirror('ACME-0002')] }),
+                }),
+            },
+        ],
+        [
+            'C3 unplaced + elsewhere + retired, C4 blocked_by',
+            {
+                remi: roster(
                     mirror('ACME-0001', { location_id: null, blocked_by: ['no_position', 'state_stale'] }),
                     mirror('ACME-0002', { location_id: 'L2' }),
-                ],
-            }),
-        })
-        const reports = await Promise.all([
-            runCheck(deps({ env: env.ok ? env.env : null })),
-            runCheck(deps({ env: null, envError: 'REMI_API_KEY: expected live_sk_ followed by 48 hex characters' })),
-            runCheck(
-                deps({
-                    env: env.ok ? env.env : null,
-                    demo: true,
-                    mqttProbe: async () => ({ connack: false, grantedQos: -1, error: 'Connection refused: Not authorized' }),
+                    mirror('ACME-0003', { blocked_by: ['retired'] }),
+                ),
+            },
+        ],
+        ['C5 not authorised', { mqttProbe: async () => ({ connack: false, grantedQos: -1, error: 'Connection refused: Not authorized' }) }],
+        ['C5 no broker reply', { mqttProbe: async () => ({ connack: false, grantedQos: -1, error: 'timeout' }) }],
+        ['C5 QoS downgrade', { mqttProbe: async () => ({ connack: true, grantedQos: 0 }) }],
+        ['C6 nothing answers', { env: httpEnv, remi: httpFleet(), httpProbe: async () => ({ status: 0, error: 'ECONNREFUSED' }) }],
+        ['C6 token mismatch', { env: httpEnv, remi: httpFleet(), httpProbe: async () => ({ status: 401 }) }],
+        ['C6 some other status', { env: httpEnv, remi: httpFleet(), httpProbe: async () => ({ status: 503 }) }],
+        ['C6 short roster', { env: httpEnv, remi: httpFleet(), httpProbe: async () => ({ status: 200, body: { bots: [] } }) }],
+        [
+            'C6 reachable, which is still only a WARN',
+            { env: httpEnv, remi: httpFleet(), httpProbe: async () => ({ status: 200, body: { bots: [{ bot_id: 'ACME-0001' }] } }) },
+        ],
+        [
+            'C7 no delivery scope',
+            { remi: remi({ listDeliveries: async () => ({ ok: false, status: 403, code: 'FORBIDDEN', message: '' }) }) },
+        ],
+        [
+            'C7 delivery probe failed',
+            { remi: remi({ listDeliveries: async () => ({ ok: false, status: 500, code: 'INTERNAL', message: '' }) }) },
+        ],
+        ['C8 samples do not validate', { parity: async () => ({ ok: false, detail: 'type-bot-state__botstate: door invalid' }) }],
+        ['C9 config did not load', { config: null, configError: 'Cannot find module' }],
+        [
+            'C9 wrong driver version',
+            {
+                config: badDriver((botId) => {
+                    const d = new FakeDriver(botId)
+                    // biome-ignore lint/suspicious/noExplicitAny: forcing a wrong version
+                    ;(d as any).driverVersion = 2
+                    return d
                 }),
-            ),
-            runCheck(
-                deps({
-                    env: env.ok ? env.env : null,
-                    config: null,
-                    configError: 'Cannot find module',
-                    parity: async () => ({ ok: false, detail: 'SOURCE.json has no commit' }),
+            },
+        ],
+        [
+            'C9 driver without validateDestination',
+            {
+                config: badDriver((botId) => {
+                    const d = new FakeDriver(botId)
+                    // biome-ignore lint/suspicious/noExplicitAny: removing a required v1 method
+                    ;(d as any).validateDestination = undefined
+                    return d
                 }),
-            ),
-            // C3 FAIL (nothing registered) and C2 WARN (a contract the kit does not freeze).
-            runCheck(
-                deps({
-                    env: env.ok ? env.env : null,
-                    remi: remi({
-                        getFleetConfig: async () => ({ ok: true, data: { ...config, contract_version: '2027-01' } }),
-                        listFleetBots: async () => ({ ok: true, data: [] }),
-                    }),
+            },
+        ],
+        [
+            'C9 factory throws',
+            {
+                config: badDriver(() => {
+                    throw new Error('cannot reach the fleet API')
                 }),
-            ),
-            // C3 WARN (unplaced, elsewhere) and C4 WARN (blocked_by), plus C5 WARN on a QoS downgrade.
-            runCheck(
-                deps({ env: env.ok ? env.env : null, remi: blockedRoster, mqttProbe: async () => ({ connack: true, grantedQos: 0 }) }),
-            ),
-            // C6 FAIL (nothing answers) and C7 WARN (no `delivery` scope) in http mode.
-            runCheck(
-                deps({
-                    env: httpEnv.ok ? httpEnv.env : null,
-                    remi: remi({
-                        getFleetConfig: async () => ({ ok: true, data: { ...config, transport: 'http' } }),
-                        listDeliveries: async () => ({ ok: false, status: 403, code: 'FORBIDDEN', message: '' }),
-                    }),
-                    httpProbe: async () => ({ status: 0, error: 'ECONNREFUSED' }),
+            },
+        ],
+        [
+            'C9 door without set_door',
+            {
+                config: badDriver((botId) => {
+                    const d = new FakeDriver(botId)
+                    d.caps = { has_door: true, supported_commands: ['navigate_to', 'cancel_navigation'] }
+                    return d
                 }),
-            ),
-        ])
-        // What makes a verdict actionable: it names the thing to change, the party to chase, or
-        // what to run. `Robot.com` counts on its own: "Robot.com has not registered your bots yet"
-        // is the whole remedy for a rule whose fix is on our side of the provisioning, not theirs.
+            },
+        ],
+        [
+            'C9 scenario overrides outside the roster',
+            {
+                config: {
+                    driver: Object.assign((botId: string) => new FakeDriver(botId), { auditRoster: () => ['ACME-0009'] }),
+                    fleet: { supportsCommandInterrupt: true },
+                },
+            },
+        ],
+    ]
+
+    it('every FAIL and WARN the command can emit carries a remedy, and none of them prints a secret', async () => {
+        // What makes a verdict actionable: it names the artefact to change, the party to chase, or
+        // what to run. `Robot.com` counts on its own — "Robot.com has not registered your bots yet"
+        // is the whole remedy for a rule whose fix is on our side of the provisioning — and so do
+        // `API key`, `scope`, `network` and `port`, which name the one artefact to look at: "the API
+        // key is not valid" and "no network to <host>, or the port is not 8883" each say exactly what
+        // the partner has to go and change.
         const remedy =
-            /\b(paste|copy|restore|update|unset|edit|expose|ask|tell|report|check|Robot\.com|see C[1-9]|efk|git pull|MQTT_|HTTP_|SANDBOX_|REMI_)/
+            /\b(paste|copy|restore|update|unset|edit|expose|ask|tell|report|check|retire|retry|API key|scope|network|port|use |Robot\.com|see C[1-9]|efk|git pull|MQTT_|HTTP_|SANDBOX_|REMI_)/
         const flagged = new Set<string>()
-        for (const report of reports) {
+        for (const [name, over] of corpus) {
+            const report = await runCheck(deps({ env: mqttEnv, ...over }))
             for (const r of report.rules) {
-                assert.ok(r.message.length > 0, `${r.id} says nothing`)
+                assert.ok(r.message.length > 0, `${name}: ${r.id} says nothing`)
                 if (r.status === 'FAIL' || r.status === 'WARN') {
                     flagged.add(r.id)
-                    assert.match(r.message, remedy, `${r.id} is a verdict with nothing to act on: ${r.message}`)
+                    assert.match(r.message, remedy, `${name}: ${r.id} is a verdict with nothing to act on — "${r.message}"`)
                 }
-                for (const [name, value] of Object.entries(secrets)) {
-                    assert.ok(!r.message.includes(value), `${r.id} leaked the ${name}`)
-                    assert.ok(!r.message.includes(value.slice(0, 12)), `${r.id} leaked a prefix of the ${name}`)
+                for (const [secret, value] of Object.entries(secrets)) {
+                    assert.ok(!r.message.includes(value), `${name}: ${r.id} leaked the ${secret}`)
+                    assert.ok(!r.message.includes(value.slice(0, 12)), `${name}: ${r.id} leaked a prefix of the ${secret}`)
                 }
             }
-            assert.ok(!formatReport(report).includes(secrets.password), 'the rendered report leaked the broker password')
+            assert.ok(!formatReport(report).includes(secrets.password), `${name}: the rendered report leaked the broker password`)
         }
         // Coverage: every one of the nine rules was exercised in a state that asks the partner to do
-        // something, so "carries a remedy" is a claim about all of them, not about the four that ran.
+        // something, so "carries a remedy" is a claim about all of them, not about the ones that ran.
         assert.deepEqual([...flagged].sort(), ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
+    })
+    /**
+     * Finding 1 of fix round 1, and the worst defect this command could have. In demo mode every
+     * remi answer is invented, so a PASS is a lie a partner will act on — C2 says so loudly, and C7
+     * used to say the opposite two lines later, from the same fake.
+     */
+    it('demo mode never emits a PASS: nothing it could pass on was verified', async () => {
+        const report = await runCheck(deps({ demo: true }))
+        assert.deepEqual(
+            report.rules.filter((r) => r.status === 'PASS').map((r) => r.id),
+            ['C1', 'C5', 'C8'],
+            'only the rules that do NOT ask remi anything may pass in demo mode',
+        )
+        assert.equal(rule(report, 'C7')?.status, 'SKIP')
+        assert.equal(rule(report, 'C7')?.message, 'demo mode')
+        for (const id of ['C3', 'C4', 'C7'] as const) {
+            assert.equal(rule(report, id)?.status, 'SKIP', `${id} must not answer from the in-memory fake`)
+        }
     })
     it('formatReport renders one line per rule and a verdict', () => {
         const text = formatReport({ rules: [{ id: 'C1', status: 'PASS', message: '.env parses (mqtt mode)' }], exitCode: 0 })

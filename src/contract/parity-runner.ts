@@ -106,34 +106,69 @@ export function sampleNames(): string[] {
         .map((f) => f.replace(/\.json$/, ''))
 }
 
-/** The whole parity check as one call, so the test and `efk check` C8 cannot drift apart. */
+/**
+ * Reads a sample without throwing. `readSample` above stays as it is — a missing file SHOULD blow up
+ * the per-sample test next to it — but the whole-check runner must never throw: its caller is
+ * `efk check` C8, the first command a partner runs, and a mis-synced clone (a sample deleted, the
+ * directory half-copied) is exactly the case C8 exists to diagnose. A stack trace there ends the
+ * investigation; a failed result with the remedy continues it.
+ */
+function tryReadSample(name: string): { ok: true; value: unknown } | { ok: false; error: string } {
+    try {
+        return { ok: true, value: readSample(name) }
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+}
+
+/** The whole parity check as one call, so the test and `efk check` C8 cannot drift apart. It reports; it never throws. */
 export async function runParityInProcess(): Promise<{ ok: boolean; detail: string }> {
     const problems: string[] = []
-    const files = sampleNames()
+    let files: string[]
+    try {
+        files = sampleNames()
+    } catch (error) {
+        // No samples directory at all: nothing below can say anything useful, so stop here.
+        return { ok: false, detail: `the samples directory is unreadable: ${error instanceof Error ? error.message : String(error)}` }
+    }
 
     for (const file of files) {
         if (!(file in expectations)) problems.push(`${file}: no expectation declared`)
     }
     for (const [name, schema] of Object.entries(expectations)) {
-        const result = schema.safeParse(readSample(name))
+        const raw = tryReadSample(name)
+        if (!raw.ok) {
+            problems.push(`${name}: the expectation names a sample that is not readable (${raw.error})`)
+            continue
+        }
+        const result = schema.safeParse(raw.value)
         if (!result.success) problems.push(`${name}: ${result.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`)
     }
 
-    const source = readSample('SOURCE') as { commit: string; sha256: string; files: string[] }
-    if (!source.commit) problems.push('SOURCE.json has no commit')
-    if (!source.sha256) problems.push('SOURCE.json has no sha256')
-    const extracted = files.filter((f) => !f.startsWith('handmade__')).sort()
-    if (JSON.stringify(extracted) !== JSON.stringify([...source.files].sort())) {
-        problems.push('SOURCE.json.files does not match the extracted samples on disk')
+    const rawSource = tryReadSample('SOURCE')
+    const source = rawSource.ok ? (rawSource.value as { commit?: unknown; sha256?: unknown; files?: unknown }) : null
+    if (!source) problems.push(`SOURCE.json is missing or unreadable (${rawSource.ok ? '' : rawSource.error})`)
+    else {
+        if (!source.commit) problems.push('SOURCE.json has no commit')
+        if (!source.sha256) problems.push('SOURCE.json has no sha256')
+        const extracted = files.filter((f) => !f.startsWith('handmade__')).sort()
+        // `files` used to be spread unguarded, so a SOURCE.json without it threw a TypeError instead
+        // of reporting the very thing this line is here to check.
+        if (!Array.isArray(source.files)) problems.push('SOURCE.json has no files list')
+        else if (JSON.stringify(extracted) !== JSON.stringify([...(source.files as string[])].sort())) {
+            problems.push('SOURCE.json.files does not match the extracted samples on disk')
+        }
     }
 
-    const config = fleetConfigResponseSchema.safeParse(readSample('type-fleet-config__fleetconfig-response'))
-    if (!config.success) problems.push('the frozen FleetConfig sample does not parse')
+    const rawConfig = tryReadSample('type-fleet-config__fleetconfig-response')
+    const config = rawConfig.ok ? fleetConfigResponseSchema.safeParse(rawConfig.value) : null
+    if (!config) problems.push('the frozen FleetConfig sample is not readable')
+    else if (!config.success) problems.push('the frozen FleetConfig sample does not parse')
     else if (config.data.contract_version !== CONTRACT_VERSION) {
         problems.push(`the frozen FleetConfig sample says contract ${config.data.contract_version}, version.ts says ${CONTRACT_VERSION}`)
     }
 
     return problems.length === 0
-        ? { ok: true, detail: `${files.length} samples, contract ${CONTRACT_VERSION}, data.ts ${source.commit}` }
+        ? { ok: true, detail: `${files.length} samples, contract ${CONTRACT_VERSION}, data.ts ${String(source?.commit)}` }
         : { ok: false, detail: problems.join(' | ') }
 }

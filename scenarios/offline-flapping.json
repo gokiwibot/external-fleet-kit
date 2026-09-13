@@ -1,0 +1,6 @@
+{
+    "overrides": {
+        "ACME-0001": { "link": { "mode": "offline" } },
+        "ACME-0002": { "link": { "mode": "flapping", "flapPeriodMs": 20000 } }
+    }
+}

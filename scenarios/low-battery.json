@@ -1,0 +1,8 @@
+{
+    "default": { "battery": { "drainPctPerKm": 0 } },
+    "overrides": {
+        "ACME-0001": { "battery": { "startPct": 15 } },
+        "ACME-0002": { "battery": { "startPct": 20 } },
+        "ACME-0003": { "battery": { "startPct": 21 } }
+    }
+}

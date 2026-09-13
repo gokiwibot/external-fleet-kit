@@ -1,0 +1,1 @@
+{ "default": { "destinations": { "snapGridDeg": 0.0002, "unreachableBeyondM": 300 } } }

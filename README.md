@@ -208,7 +208,7 @@ Nothing you see in demo mode is evidence of anything: no bot is registered, no d
 
 ## Public documentation
 
-remi documents this kit and the sandbox at [`/docs/external-fleets/kit`](https://remi.kiwi/docs/external-fleets/kit), next to the [External Fleets contract](https://remi.kiwi/docs/external-fleets). That page says what this README says, in less space, and links here for detail. When they disagree, this README wins and the page gets corrected.
+remi documents this kit and the sandbox at [`/docs/external-fleets/kit`](https://remi.kiwi/docs/external-fleets/kit), next to the [External Fleets contract](https://remi.kiwi/docs/external-fleets). **That page is not published yet** — the contract page is live, the kit page ships with the next documentation release, so until then the link above 404s and this README is the only documentation. That page says what this README says, in less space, and links here for detail. When they disagree, this README wins and the page gets corrected.
 
 ## License
 

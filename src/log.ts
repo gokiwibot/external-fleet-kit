@@ -13,6 +13,16 @@
  * lived only in pino's serializer protected the one route whose author we control and left the one
  * we do not wide open. `createLogger` therefore wraps `bus.emit` once, and everything downstream —
  * the TUI, the SSE stream, `/api/snapshot`, `replay()` and the stderr sink — sees redacted payloads.
+ *
+ * THAT MAKES THIS AN OUTBOUND DATA PATH, NOT ONLY A LOGGING ONE, and the trade-offs below are set
+ * accordingly. `fleet-manager.ts` subscribes to `event.emitted` and republishes `e.event` TO REMI
+ * through the transport, and that event is emitted before it is published — so what remi receives is
+ * the redacted copy, `detail` included, and `detail` comes straight from the partner's driver. A
+ * false positive here (a password that happens to be a dictionary word, matched inside innocent
+ * text) does not merely garble a log line, it garbles what remi is told. So: nothing is ever dropped
+ * where it can be preserved (see the DAG memo in `redactValue`), the round trip is pinned by tests
+ * against the frozen contract samples for both `state.published` and `event.emitted`, and the README
+ * has to say plainly that the redactor sits on this path.
  */
 import pino, { type Logger } from 'pino'
 import type { EventBus, EventName, KitEvents } from './core/events'
@@ -69,30 +79,83 @@ const REDACT_PATHS = [
 /**
  * How deep `redactValue` walks. Past it the whole subtree becomes `[redacted]` rather than being
  * passed through: the bound is FAIL-CLOSED on purpose, so it is not the silent depth limit that a
- * wildcard path list is. It doubles as the cycle guard — a `data` object a partner's driver built
- * with a reference back into itself hits the bound instead of recursing for ever — and twelve levels
- * is far past anything a log payload has any business being.
+ * wildcard path list is. Twelve levels is far past anything a log payload has any business being.
+ *
+ * IT IS NOT THE CYCLE GUARD, and an earlier version that leaned on it for that was a way to kill the
+ * process. A depth bound caps depth, not node COUNT: an object whose k keys point back at itself
+ * expands to k¹² nodes before the bound stops anything. Measured against that version on this
+ * machine, a uniform 5-key cycle exhausted a 256 MB heap and took the process with it.
+ *
+ * The route in is `bot-runtime.ts`'s `log(message, data)` seam, which hands a PARTNER'S driver a
+ * direct line onto the bus; the likeliest object to arrive through it is the error that driver's own
+ * HTTP client threw, and in axios/undici shape that carries `config`/`request`/`response`
+ * back-links. Worth being exact about this: that particular graph branches down to nothing and
+ * finished in ~3 ms even unguarded — which is the point. A realistic-looking case surviving is not
+ * evidence that the guard is unnecessary, because the object one field away from it is fatal.
+ * `seen`/`active` below is the real guard; this bound is the second net.
  */
 const MAX_REDACT_DEPTH = 12
+
+/** What a reference that points back into its own ancestry is replaced with. */
+const CIRCULAR = '[circular]'
 
 /**
  * One redaction pass over a whole bus payload: secret KEYS censored at any depth, every string value
  * scrubbed for secret VALUES. Returns a copy; the caller's object is never mutated, because the
  * payload it was handed belongs to whoever emitted it and may still be in use.
+ *
+ * Two structures, because a cycle and a shared reference are not the same thing and must not be
+ * treated the same way:
+ *
+ *  - `active` is the objects on the path from the root to here. Meeting one again IS a cycle, and it
+ *    becomes `[circular]` — which also keeps the copy acyclic, so `JSON.stringify` downstream (the
+ *    SSE stream does exactly that on every event) cannot throw on it.
+ *  - `seen` memoises objects already finished. Meeting one again is a shared reference in a DAG, and
+ *    it yields THE SAME redacted copy: no data is lost, and no subtree is walked twice, which is
+ *    what bounds the total work to the node count rather than to `k ** depth`.
+ *
+ * Collapsing a shared reference to a marker would have been simpler, and wrong: the redactor sits on
+ * an OUTBOUND data path (see `createLogger`), so anything it drops is dropped on its way to remi.
  */
-function redactValue(value: unknown, scrub: (text: string) => string, depth: number): unknown {
-    if (depth > MAX_REDACT_DEPTH) return REDACTED
+function redactValue(
+    value: unknown,
+    scrub: (text: string) => string,
+    depth: number,
+    seen: WeakMap<object, unknown>,
+    active: WeakSet<object>,
+): unknown {
     if (typeof value === 'string') return scrub(value)
     if (value === null || typeof value !== 'object') return value
-    if (Array.isArray(value)) return value.map((item) => redactValue(item, scrub, depth + 1))
+    if (active.has(value)) return CIRCULAR
+    const memo = seen.get(value)
+    if (memo !== undefined) return memo
+    if (depth > MAX_REDACT_DEPTH) return REDACTED
     // A Date survives as itself: walking its (empty) enumerable entries would turn a timestamp a
     // partner's driver logged into `{}`, which is data loss dressed up as redaction.
     if (value instanceof Date) return value
-    const out: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value)) {
-        out[key] = SECRET_KEYS.has(normalizeKey(key)) ? REDACTED : redactValue(item, scrub, depth + 1)
+    active.add(value)
+    // Plain loops, not `map`/`Object.fromEntries`: this runs on every event on the bus, up to 800 a
+    // second on a 200-bot roster, and the pair array those build is pure garbage.
+    let out: unknown
+    if (Array.isArray(value)) {
+        const items: unknown[] = []
+        for (const item of value) items.push(redactValue(item, scrub, depth + 1, seen, active))
+        out = items
+    } else {
+        const record: Record<string, unknown> = {}
+        for (const [key, item] of Object.entries(value)) {
+            record[key] = SECRET_KEYS.has(normalizeKey(key)) ? REDACTED : redactValue(item, scrub, depth + 1, seen, active)
+        }
+        out = record
     }
+    active.delete(value)
+    seen.set(value, out)
     return out
+}
+
+/** The entry point: one pair of guards per payload, never shared between events. */
+function redactPayload(value: unknown, scrub: (text: string) => string): unknown {
+    return redactValue(value, scrub, 0, new WeakMap(), new WeakSet())
 }
 
 /** Needles shorter than this are dropped; a base64 window shorter than that is dropped too. */
@@ -168,7 +231,17 @@ function scrubber(secrets: string[]): (line: string) => string {
         (a, b) => b.length - a.length,
     )
     if (needles.length === 0) return (line) => line
-    return (line) => needles.reduce((acc, needle) => acc.split(needle).join(REDACTED), line)
+    return (line) => {
+        let out = line
+        // `includes` before `split`/`join`. The empty-needle short-circuit above only fires when the
+        // process has no secrets at all, which never happens in production — `REMI_API_KEY` is always
+        // set — so without this every one of ~18 needles allocated an array and rejoined it for every
+        // string on the bus, `botId` and `door: 'closed'` included. Identical semantics (`split` on a
+        // needle that is not there returns a one-element array that rejoins to the same string) for
+        // roughly a third of the cost.
+        for (const needle of needles) if (out.includes(needle)) out = out.split(needle).join(REDACTED)
+        return out
+    }
 }
 
 export function createLogger(level: LogLevel, bus: EventBus, opts: LoggerOptions): Logger {
@@ -188,7 +261,7 @@ export function createLogger(level: LogLevel, bus: EventBus, opts: LoggerOptions
      */
     const emit = bus.emit
     bus.emit = <K extends EventName>(name: K, payload: KitEvents[K]) => {
-        emit.call(bus, name, redactValue(payload, scrub, 0) as KitEvents[K])
+        emit.call(bus, name, redactPayload(payload, scrub) as KitEvents[K])
     }
 
     const destination = {

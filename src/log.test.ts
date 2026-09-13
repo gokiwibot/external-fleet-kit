@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
-import type { BotState } from './contract/schemas'
+import type { BotEvent, BotState } from './contract/schemas'
 import { createEventBus } from './core/events'
 import { createLogger } from './log'
 
@@ -208,5 +208,120 @@ describe('logger', () => {
         // a number that had become its own string.
         assert.equal(typeof seen[0]?.state.seq, 'number')
         assert.equal(seen[0]?.state.current_command?.id, 'GW-5867/pickup')
+    })
+
+    it('leaves an outbound BotEvent alone too: fleet-manager republishes this one TO REMI', () => {
+        // `fleet-manager.ts` subscribes to `event.emitted` and republishes `e.event` through the
+        // transport, and the event is emitted BEFORE it is published — so remi receives the redacted
+        // copy, `detail` included, and `detail` is written by the partner's own driver. A redactor
+        // that reshaped or dropped anything here would corrupt an outbound message, not a log line.
+        const event = JSON.parse(
+            readFileSync(new URL('./contract/samples/fleet-report-event__request-blocked.json', import.meta.url), 'utf8'),
+        ) as BotEvent
+        const bus = createEventBus()
+        const seen: Array<{ botId: string; event: BotEvent; delivered: boolean; detail?: string }> = []
+        bus.on('event.emitted', (p) => seen.push(p))
+        createLogger('debug', bus, { sink: 'bus', secrets: ['live_sk_0000000000000000'] })
+        bus.emit('event.emitted', { botId: event.bot_id, event, delivered: false, detail: 'queued for retry' })
+        assert.equal(seen.length, 1)
+        assert.deepEqual(seen[0]?.event, event)
+        // Named explicitly, because the free-text half is the half a false positive would eat.
+        assert.equal(seen[0]?.event.detail?.message, 'Sidewalk blocked, waiting for operator')
+        assert.equal(seen[0]?.event.detail?.reason, 'obstruction')
+        assert.equal(seen[0]?.detail, 'queued for retry')
+        assert.equal(seen[0]?.delivered, false)
+    })
+
+    it('handles a self-referential payload correctly: an axios-shaped error from a partner driver', () => {
+        // The single likeliest thing a driver author passes to `bot-runtime.ts`'s `log(message,
+        // data)` seam is the error their own HTTP client threw, and in axios/undici shape that
+        // carries `config`/`request`/`response` back-links. This test is about what the redactor
+        // RETURNS for that graph; the test below is about what it costs.
+        const error: Record<string, unknown> = { message: 'connect ECONNREFUSED', code: 'ECONNREFUSED' }
+        const config: Record<string, unknown> = { url: 'https://remi.invalid/api/v3/fleet', method: 'get', token: 'live_sk_leaked' }
+        const request: Record<string, unknown> = { path: '/api/v3/fleet' }
+        const response: Record<string, unknown> = { status: 502 }
+        error.config = config
+        error.request = request
+        error.response = response
+        // Five back-links, the shape that used to OOM.
+        config.error = error
+        request.error = error
+        response.error = error
+        response.config = config
+        response.request = request
+
+        const { bus, entries } = recorder()
+        createLogger('debug', bus, { sink: 'bus', secrets: [] })
+        bus.emit('log', { level: 'error', message: 'driver request failed', data: { error } })
+        const entry = entries[0]
+        assert.ok(entry)
+        const walked = (entry.data as { error: Record<string, Record<string, unknown>> }).error
+        // Positive: everything that is not a back-link survived, at every level.
+        assert.equal(walked.message, 'connect ECONNREFUSED')
+        assert.equal(walked.config?.url, 'https://remi.invalid/api/v3/fleet')
+        assert.equal(walked.response?.status, 502)
+        // The key layer still ran inside the cycle.
+        assert.equal(walked.config?.token, '[redacted]')
+        // The back-link became a marker, so the copy is acyclic and the SSE stream's JSON.stringify
+        // on every event cannot throw on it.
+        assert.equal(walked.config?.error, '[circular]')
+        assert.equal(typeof JSON.stringify(entry), 'string')
+        // A DAG is NOT a cycle: `response.config` is the same object as `error.config`, and it is
+        // preserved as the same redacted copy rather than collapsed to a marker — this redactor sits
+        // on an outbound path, so dropping a shared subtree would drop it on its way to remi.
+        assert.equal(walked.response?.config, walked.config)
+    })
+
+    it('terminates on the cycle shape that used to exhaust the heap', () => {
+        // THE PROCESS-KILLER, and the reason the depth bound is not the cycle guard. A depth bound
+        // caps DEPTH, not node COUNT: an object whose k keys all point back at itself expands to
+        // k**12 nodes before the bound stops anything. Measured against the previous depth-only
+        // version on this machine: this exact object exhausted a 256 MB heap and killed the process
+        // with `FATAL ERROR: … heap out of memory`. (The axios graph above is the same class of
+        // object but branches down to nothing, and finished in ~3 ms even unguarded — which is
+        // precisely why a realistic-looking case is not evidence that the guard is unnecessary.)
+        const cycle: Record<string, unknown> = {}
+        for (const key of ['a', 'b', 'c', 'd', 'e']) cycle[key] = cycle
+        const { bus, entries } = recorder()
+        createLogger('debug', bus, { sink: 'bus', secrets: [] })
+        const startedAt = Date.now()
+        bus.emit('log', { level: 'error', message: 'driver handed us a graph', data: { cycle } })
+        const elapsed = Date.now() - startedAt
+        assert.ok(elapsed < 1_000, `redaction took ${elapsed} ms`)
+        const entry = entries[0]
+        assert.ok(entry)
+        // Positive, so an empty or missing payload cannot pass this: one level of the object really
+        // was walked, and what it pointed back at is a marker rather than another copy.
+        const walked = (entry.data as { cycle: Record<string, unknown> }).cycle
+        assert.deepEqual(walked, { a: '[circular]', b: '[circular]', c: '[circular]', d: '[circular]', e: '[circular]' })
+        assert.equal(entry.message, 'driver handed us a graph')
+        assert.equal(typeof JSON.stringify(entry), 'string')
+    })
+
+    it('a payload nested past MAX_REDACT_DEPTH fails closed', () => {
+        const { bus, entries } = recorder()
+        createLogger('debug', bus, { sink: 'bus', secrets: [] })
+        // 16 levels of plain nesting, no cycle: the second net, which nothing else in this file
+        // reaches — no other test nests past three.
+        let deep: Record<string, unknown> = { bottom: 'past the bound', password: 'also past it' }
+        for (let i = 0; i < 16; i += 1) deep = { level: i, next: deep }
+        bus.emit('log', { level: 'info', message: 'deep', data: deep })
+        const entry = entries[0]
+        assert.ok(entry)
+        let node = entry.data as Record<string, unknown>
+        // Walk down and find where it stopped. Positive first: everything above the bound is intact.
+        let steps = 0
+        while (typeof node.next === 'object' && node.next !== null) {
+            assert.equal(node.level, 15 - steps)
+            node = node.next as Record<string, unknown>
+            steps += 1
+        }
+        assert.equal(node.next, '[redacted]')
+        // Fail-closed means the subtree is CENSORED, not passed through: the deepest object's own
+        // fields never appear anywhere in the line.
+        assert.doesNotMatch(JSON.stringify(entry), /past the bound/)
+        assert.doesNotMatch(JSON.stringify(entry), /also past it/)
+        assert.equal(entry.message, 'deep')
     })
 })

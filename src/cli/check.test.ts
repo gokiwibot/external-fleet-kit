@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { FakeDriver } from '../core/fakes'
 import type { RemiClient } from '../remi/client'
-import { formatReport, runCheck } from './check'
+import { BLOCKED_HELP, formatReport, runCheck } from './check'
 import { loadEnv } from './env'
 
 const envSource = {
@@ -295,10 +295,17 @@ describe('efk check', () => {
     /**
      * The whole product value of this command: a verdict a partner cannot act on is worth nothing.
      *
-     * THE CORPUS IS THE POINT. Not a sample of rules — one case per FAIL/WARN branch `check.ts` can
-     * emit, named after the branch it reaches, so a message added or reworded without a remedy fails
-     * HERE instead of shipping. The same pass asserts that nothing printed is a secret: the `.env`
-     * behind these reports holds an API key, a broker password and a bearer token.
+     * THE GUARD IS THE TYPE, NOT A REGEX. A FAIL or a WARN is built from `Finding`s, each of which
+     * has to carry a `remedy`, so the check below is an exact one — `remedy` is non-empty — rather
+     * than a search for remedy-ish words. The word search let three messages through twice:
+     * `retired: <bot>` passed because `retire` is a substring of `retired`, `unavailable` because
+     * `report` is a substring of `reports`, and `battery_below_minimum`/`no_position` because they
+     * only ever appeared joined to a better-written sibling.
+     *
+     * THE CORPUS IS STILL THE POINT. One case per FAIL/WARN branch `check.ts` can emit, named after
+     * the branch it reaches, so a new branch is a new row here. The same pass asserts that nothing
+     * printed is a secret: the `.env` behind these reports holds an API key, a broker password and a
+     * bearer token.
      */
     const secrets = { key: `live_sk_${'a'.repeat(48)}`, password: 'br0ker-s3cret', token: 'T'.repeat(40) }
     const secretSource = { ...envSource, REMI_API_KEY: secrets.key, MQTT_PASSWORD: secrets.password, HTTP_TOKEN: secrets.token }
@@ -445,14 +452,6 @@ describe('efk check', () => {
     ]
 
     it('every FAIL and WARN the command can emit carries a remedy, and none of them prints a secret', async () => {
-        // What makes a verdict actionable: it names the artefact to change, the party to chase, or
-        // what to run. `Robot.com` counts on its own — "Robot.com has not registered your bots yet"
-        // is the whole remedy for a rule whose fix is on our side of the provisioning — and so do
-        // `API key`, `scope`, `network` and `port`, which name the one artefact to look at: "the API
-        // key is not valid" and "no network to <host>, or the port is not 8883" each say exactly what
-        // the partner has to go and change.
-        const remedy =
-            /\b(paste|copy|restore|update|unset|edit|expose|ask|tell|report|check|retire|retry|API key|scope|network|port|use |Robot\.com|see C[1-9]|efk|git pull|MQTT_|HTTP_|SANDBOX_|REMI_)/
         const flagged = new Set<string>()
         for (const [name, over] of corpus) {
             const report = await runCheck(deps({ env: mqttEnv, ...over }))
@@ -460,7 +459,11 @@ describe('efk check', () => {
                 assert.ok(r.message.length > 0, `${name}: ${r.id} says nothing`)
                 if (r.status === 'FAIL' || r.status === 'WARN') {
                     flagged.add(r.id)
-                    assert.match(r.message, remedy, `${name}: ${r.id} is a verdict with nothing to act on — "${r.message}"`)
+                    assert.ok((r.remedy ?? '').trim().length > 0, `${name}: ${r.id} is a verdict with nothing to act on — "${r.message}"`)
+                    // The remedy is not a field nobody reads: it is what the partner is shown.
+                    assert.ok(r.message.includes(r.remedy.split(' | ')[0] ?? ''), `${name}: ${r.id} does not show its own remedy`)
+                } else {
+                    assert.equal(r.remedy, undefined, `${name}: ${r.id} is ${r.status} and cannot have a remedy`)
                 }
                 for (const [secret, value] of Object.entries(secrets)) {
                     assert.ok(!r.message.includes(value), `${name}: ${r.id} leaked the ${secret}`)
@@ -472,6 +475,84 @@ describe('efk check', () => {
         // Coverage: every one of the nine rules was exercised in a state that asks the partner to do
         // something, so "carries a remedy" is a claim about all of them, not about the ones that ran.
         assert.deepEqual([...flagged].sort(), ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
+    })
+    /**
+     * IN ISOLATION, one reason at a time. The joining is what hid the holes: a bot blocked for four
+     * reasons renders them in one line, so a reason with no remedy rode along on a sibling that had
+     * one and no test ever saw it alone. Every reason the kit knows now gets its own roster, its own
+     * report and its own assertion — and the table itself is checked, so a reason added to
+     * `BLOCKED_HELP` without a remedy fails before it is ever rendered.
+     */
+    describe('C4, one blocked_by reason at a time', () => {
+        for (const [reason, help] of Object.entries(BLOCKED_HELP)) {
+            it(`${reason} explains itself and says what to do`, async () => {
+                assert.ok(help.text.trim().length > 0, 'the cause is empty')
+                assert.ok(help.remedy.trim().length > 0, 'the reason has no remedy')
+                const report = await runCheck(
+                    deps({
+                        remi: remi({
+                            listFleetBots: async () => ({
+                                ok: true,
+                                data: [mirror('ACME-0001', { assignable: false, blocked_by: [reason] })],
+                            }),
+                        }),
+                    }),
+                )
+                const c4 = rule(report, 'C4')
+                assert.equal(c4?.status, 'WARN')
+                assert.ok((c4?.remedy ?? '').includes(help.remedy), `C4 dropped the remedy for ${reason}`)
+                assert.equal(c4?.message, `ACME-0001: ${reason} (${help.text} ${help.remedy})`)
+            })
+        }
+        it('a reason remi invents tomorrow is named as unknown, not printed twice', async () => {
+            const report = await runCheck(
+                deps({
+                    remi: remi({
+                        listFleetBots: async () => ({ ok: true, data: [mirror('ACME-0001', { blocked_by: ['brand_new_reason'] })] }),
+                    }),
+                }),
+            )
+            assert.equal(
+                rule(report, 'C4')?.message,
+                'ACME-0001: brand_new_reason (a reason this kit does not know yet — ask Robot.com what it means)',
+            )
+            assert.ok((rule(report, 'C4')?.remedy ?? '').length > 0)
+        })
+    })
+    /**
+     * The same holes on the C3 side: four roster warnings share one line, and `retired:` shipped
+     * with nothing to act on because it never appeared alone.
+     */
+    describe('C3, one roster warning at a time', () => {
+        const cases: Array<[string, ReturnType<typeof mirror>[], RegExp]> = [
+            ['unplaced', [mirror('ACME-0001', { location_id: null })], /^Robot\.com has not placed ACME-0001 /],
+            ['elsewhere', [mirror('ACME-0001', { location_id: 'L2' })], /^ACME-0001 sit in another location /],
+            ['retired', [mirror('ACME-0001', { blocked_by: ['retired'] })], /^retired: ACME-0001 /],
+        ]
+        for (const [name, bots, shape] of cases) {
+            it(`${name} alone still says what to do`, async () => {
+                const report = await runCheck(deps({ remi: remi({ listFleetBots: async () => ({ ok: true, data: bots }) }) }))
+                const c3 = rule(report, 'C3')
+                assert.equal(c3?.status, 'WARN')
+                assert.match(c3?.message ?? '', shape)
+                assert.ok((c3?.remedy ?? '').trim().length > 0, `${name} is a warning with nothing to act on`)
+                assert.ok(!(c3?.message ?? '').includes(' | '), 'this case must be the ONLY warning, or it is not isolated')
+            })
+        }
+        it('over the cap, alone', async () => {
+            const report = await runCheck(
+                deps({
+                    remi: remi({
+                        getFleetConfig: async () => ({ ok: true, data: { ...config, max_bots: 1 } }),
+                        listFleetBots: async () => ({ ok: true, data: [mirror('ACME-0001'), mirror('ACME-0002')] }),
+                    }),
+                }),
+            )
+            const c3 = rule(report, 'C3')
+            assert.equal(c3?.status, 'WARN')
+            assert.ok(!(c3?.message ?? '').includes(' | '), 'this case must be the ONLY warning, or it is not isolated')
+            assert.ok((c3?.remedy ?? '').trim().length > 0)
+        })
     })
     /**
      * Finding 1 of fix round 1, and the worst defect this command could have. In demo mode every

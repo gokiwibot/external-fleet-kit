@@ -5,8 +5,9 @@
  * the timestamp, zod validation before publishing, and the cadence decision per tick.
  *
  * THE PUBLISH SEAM (ruling R4). A state is not published because the kit decided to publish it — it
- * is published when a transport says it left the process. So `assemble()` builds a state and touches
- * nothing else, and `tick()` takes the transport with it: it hands the state, `seq` stamped, to
+ * is published when a transport says it left the process. So `assemble()` only builds a state — it
+ * consumes no counter and acknowledges nothing, its one side effect being the `lastValidState()`
+ * snapshot it refreshes — and `tick()` takes the transport with it: it hands the state, `seq` stamped, to
  * `publish`, and only a `true` answer consumes the counter and tells the ledger the outcome was
  * seen. The global constraint is that `seq` increments ON PUBLISH; without this seam an MQTT bot
  * whose link is down burns a counter every 15 s for states nobody receives, an HTTP bot that remi
@@ -73,6 +74,12 @@ export interface BotRuntime {
      * is what answering `GET /bots` means. It drains the ledger's queue of unpublished outcomes, so
      * the next command's outcome can take the single `current_command` slot — and it consumes no
      * `seq`, because the state it acknowledges carries none.
+     *
+     * ONLY pass a state that `assemble()` has just built. It checks the `bot_id` but not the age:
+     * acknowledging a `lastValidState()` — the stale fallback `GET /bots` serves when the assemble
+     * fails — would not pop the queue head (that status is older) yet would still move the ledger's
+     * `lastPublishedId` BACKWARDS onto a command that has since been superseded, so the slot would
+     * regress to an outcome remi has already seen. Serve the fallback, acknowledge nothing.
      */
     markServed(state: BotState): void
     /**
@@ -342,19 +349,26 @@ export function createBotRuntime(deps: BotRuntimeDeps): BotRuntime {
             const moving = (snap.speedMps ?? 0) > 0
             if (!cadence.shouldPublish({ nowMs, lastPublishedAtMs: lastAttemptAt, moving, changed })) return null
             const result = assemble(nowMs)
-            // The cadence governs how often a bot RENDERS and OFFERS a state, not how often one lands:
-            // whether it lands is the transport's business. Charging the attempt here — success or not
-            // — is what keeps a bot whose link is down from re-assembling and re-validating four times
-            // a second for hours on end. It costs freshness and nothing else, because every state is a
-            // full snapshot: the next heartbeat carries everything the refused one carried, and a
-            // transport that has just reconnected can call `touch()` instead of waiting for it.
+            // The tick has had its turn, whatever came of it. Charging it here — not only on a
+            // delivery — is what keeps a bot whose link is down, or whose driver has lost its
+            // position, from re-assembling and re-validating four times a second for hours on end,
+            // and `dropped()` from counting the same missing position 14,400 times an hour.
             lastAttemptAt = nowMs
-            changed = false
             if (!result.ok) {
+                // `changed` deliberately survives: nothing was assembled, so the change has NOT been
+                // rendered anywhere and the contract still owes it a state within a second of
+                // happening. Clearing it here would make a door change that coincided with a
+                // momentary `position: null` wait for the next 15 s heartbeat.
                 droppedCount += 1
                 bus.emit('state.dropped', { botId, reason: result.reason })
                 return null
             }
+            // From here the change IS rendered into a full snapshot and offered to the transport, so
+            // the flag has been spent even if the transport says no: whether a state lands is the
+            // transport's business, and a refused one costs freshness and nothing else, because the
+            // next heartbeat carries everything it carried. A transport that has just reconnected can
+            // call `touch()` instead of waiting for that heartbeat.
+            changed = false
             // Reserved, not consumed: `seq.next()` runs below only if the transport confirms. The
             // guard above keeps ticks serial, so the reservation is still the next number by then.
             const state: BotState = { ...result.state, seq: seq.peek(botId) + 1 }

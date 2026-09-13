@@ -330,6 +330,40 @@ describe('bot runtime — the publish seam', () => {
         const published = await runtime.tick(clock.nowMs, accepting().send)
         assert.equal(published?.seq, 1, 'the first state remi actually receives is seq 1')
     })
+    it('a refused publish spends the tick: the next attempt waits for the cadence instead of retrying 250 ms later', async () => {
+        const { clock, runtime } = harness()
+        let attempts = 0
+        const refuse = () => {
+            attempts += 1
+            return false
+        }
+        assert.equal(await runtime.tick(clock.nowMs, refuse), null)
+        assert.equal(attempts, 1)
+        clock.advance(250)
+        assert.equal(await runtime.tick(clock.nowMs, refuse), null)
+        assert.equal(attempts, 1, 'idle and unchanged: the refused attempt was this window turn, so nothing is re-rendered')
+        clock.advance(14_750)
+        assert.equal(await runtime.tick(clock.nowMs, refuse), null)
+        assert.equal(attempts, 2, 'and the heartbeat tries again')
+    })
+    it('a dropped assemble does NOT spend the change: the contract still owes it a state within the second', async () => {
+        const { clock, driver, runtime } = harness()
+        const { send } = accepting()
+        assert.ok(await runtime.tick(clock.nowMs, send), 'the bot is publishing normally')
+
+        // A door change that happens to coincide with a momentary loss of position.
+        driver.snap = { ...driver.snap, door: 'opened', position: null }
+        driver.fire('stateChanged')
+        clock.advance(250)
+        assert.equal(await runtime.tick(clock.nowMs, send), null, 'nothing could be assembled')
+        assert.equal(runtime.dropped(), 1)
+
+        driver.snap = { ...driver.snap, position: { lat: 33.97, lng: -118.41 } }
+        clock.advance(250)
+        const published = await runtime.tick(clock.nowMs, send)
+        assert.equal(published?.door, 'opened', 'published 500 ms after the change, not at the next 15 s heartbeat')
+        assert.equal(published?.seq, 2)
+    })
     it('the counter is untouched while the publish is in flight, and stamped on the state the transport gets', async () => {
         const { clock, seq, runtime } = harness()
         let seenInside: number | undefined

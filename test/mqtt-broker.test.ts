@@ -34,10 +34,34 @@ const BOT_ID = `EFK-TEST-${Math.floor(Math.random() * 0xffffff)
     .toString(16)
     .padStart(6, '0')}`
 
+/**
+ * The port mqtt.js will actually dial. `new URL('mqtt://127.0.0.1').port` is the EMPTY STRING, and
+ * mqtt.js then connects to 1883 regardless — so comparing `parsed.port` to '1883' lets the most
+ * natural spelling of the URL walk straight past the rail and into the broker it exists to keep the
+ * suite away from. The scheme's default is resolved first, and an unknown scheme with no explicit
+ * port is refused rather than guessed: what it would dial is exactly what we cannot tell.
+ */
+const DEFAULT_PORTS: Readonly<Record<string, string>> = { 'mqtt:': '1883', 'mqtts:': '8883', 'ws:': '80', 'wss:': '443' }
+
+function brokerPort(parsed: globalThis.URL): string {
+    if (parsed.port) return parsed.port
+    const fallback = DEFAULT_PORTS[parsed.protocol]
+    assert.ok(
+        fallback,
+        `refusing ${parsed.protocol}//${parsed.host}: unknown scheme with no explicit port, so the port it would dial is unknown`,
+    )
+    return fallback
+}
+
 function assertSafeBroker(url: string) {
     const parsed = new globalThis.URL(url)
-    assert.notEqual(parsed.port, '1883', 'refusing port 1883: on a dev machine that is a broker without MQTT 5, and the run would hang')
+    // Production first: it is the graver mistake, and it deserves to be named whatever port it is on.
     assert.ok(!/kiwibot\.com$/i.test(parsed.hostname), `refusing ${parsed.hostname}: that is production, not a test broker`)
+    assert.notEqual(
+        brokerPort(parsed),
+        '1883',
+        'refusing port 1883: on a dev machine that is a broker without MQTT 5, and the run would hang',
+    )
 }
 
 class TestRuntime {
@@ -81,7 +105,45 @@ async function within(ms: number, label: string, condition: () => Promise<boolea
     assert.fail(`timed out after ${ms} ms waiting for ${label}`)
 }
 
-describe('mqtt transport against a real broker', { skip: URL ? false : 'set EFK_MQTT_URL to run (e.g. mqtt://127.0.0.1:1884)' }, () => {
+/**
+ * The rail on the rail. It runs whether or not a broker is configured, because the spelling it
+ * refuses is the one somebody types the first time they enable this file — and by then the guard is
+ * the only thing between the run and a broker that hangs it for minutes with no output.
+ */
+describe('EFK_MQTT_URL guard', () => {
+    it('refuses port 1883 however it is spelled, including not at all', () => {
+        const refused = /refusing port 1883/
+        // Explicit …
+        assert.throws(() => assertSafeBroker('mqtt://127.0.0.1:1883'), refused)
+        // … and implied, which is how anyone would actually type it.
+        assert.throws(() => assertSafeBroker('mqtt://127.0.0.1'), refused)
+        assert.throws(() => assertSafeBroker('mqtt://localhost'), refused)
+        assert.throws(() => assertSafeBroker('ws://127.0.0.1:1883'), refused, 'the check is on the port, not on the scheme')
+        assert.equal(brokerPort(new globalThis.URL('mqtt://127.0.0.1')), '1883', 'an empty port is not "no port": mqtt.js dials 1883')
+    })
+
+    it('refuses production, and an unknown scheme whose port cannot be known', () => {
+        assert.throws(() => assertSafeBroker('mqtts://mqtt.kiwibot.com:8883'), /that is production/)
+        assert.throws(() => assertSafeBroker('mqtt://mqtt.kiwibot.com'), /that is production/)
+        assert.throws(() => assertSafeBroker('tcp://127.0.0.1'), /unknown scheme with no explicit port/)
+    })
+
+    it('accepts a local MQTT 5 broker on another port, and the contract default over TLS', () => {
+        assert.doesNotThrow(() => assertSafeBroker('mqtt://127.0.0.1:1884'))
+        assert.doesNotThrow(() => assertSafeBroker('mqtts://broker.example.com'))
+        assert.doesNotThrow(() => assertSafeBroker('wss://broker.example.com'))
+        assert.equal(brokerPort(new globalThis.URL('mqtts://broker.example.com')), '8883')
+    })
+})
+
+/**
+ * `timeout` sits on the SUITE so every test in the file inherits it: node's default is `Infinity`,
+ * and a bound that has to be remembered on each `it` is one the next test added here will not have.
+ */
+describe('mqtt transport against a real broker', {
+    skip: URL ? false : 'set EFK_MQTT_URL to run (e.g. mqtt://127.0.0.1:1884)',
+    timeout: 30_000,
+}, () => {
     it('connects, retains state, and recovers from a drop with a reconnect that calls touch()', { timeout: 30_000 }, async (t) => {
         const url = URL ?? ''
         assertSafeBroker(url)

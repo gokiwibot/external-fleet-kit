@@ -29,7 +29,7 @@ export const deliverySchema = z.looseObject({
 export type Delivery = z.output<typeof deliverySchema>
 
 /**
- * The body of `POST /api/v3/delivery/`, taken from the Delivery API page
+ * The body of `POST /api/v3/delivery`, taken from the Delivery API page
  * (`apps/remi-pro/app/(docs)/docs/delivery-api/data.ts`, spec `create-delivery` plus the `Point`,
  * `Package` and `Item` types). Only the fields the kit actually sends are typed:
  *  - `pickup`/`dropoff` are the REFERENCE form of `Point`: exactly one of `id`, `external_id` or the
@@ -154,9 +154,9 @@ export function createRemiClient(deps: { baseUrl: string; apiKey: string; fetch?
             }
             return { ok: true, data: all }
         },
-        listDeliveries: (limit) => call('GET', `/api/v3/delivery/?limit=${limit}`, z.unknown()),
+        listDeliveries: (limit) => call('GET', `/api/v3/delivery?limit=${limit}`, z.unknown()),
         async createDelivery(body) {
-            const result = await call('POST', '/api/v3/delivery/', envelope(deliverySchema), body)
+            const result = await call('POST', '/api/v3/delivery', envelope(deliverySchema), body)
             return result.ok ? { ok: true, data: result.data.data } : result
         },
         async getDelivery(id) {

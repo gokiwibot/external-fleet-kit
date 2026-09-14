@@ -151,9 +151,9 @@ describe('remi client', () => {
         assert.equal(result.ok, false)
         assert.equal(!result.ok && result.code, 'CONTRACT_MISMATCH')
     })
-    it('createDelivery posts the real Delivery API body to /api/v3/delivery/ and returns id and state', async () => {
+    it('createDelivery posts the real Delivery API body to /api/v3/delivery and returns id and state', async () => {
         const { fetchFn, calls } = fakeFetch({
-            '/api/v3/delivery/': () =>
+            '/api/v3/delivery': () =>
                 json({ data: { id: 'EK-5867', state: 'pending', bot: null, arriving: null, pickup: {}, dropoff: {} } }, 201),
         })
         const client = createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn })
@@ -222,6 +222,45 @@ describe('remi client', () => {
         assert.equal(result.ok, false)
         assert.equal(!result.ok && result.code, 'UPSTREAM_DOWN')
         assert.deepEqual(sizes, [200, 200], 'the first chunk was sent, the third (after the failure) never was')
+    })
+})
+
+// FIX-3: a fake fetch keyed by path (like the one above) still matches a route that bakes the same
+// bug into its own key — that is exactly how the `/api/v3/delivery/` trailing slash shipped and was
+// never caught. These tests capture the REAL request URL the client built and assert it against a
+// literal expected string, so a stray trailing (or missing) slash fails the test instead of the fake
+// route silently absorbing it.
+describe('remi client requests the exact URL remi serves (no trailing slash)', () => {
+    it('createDelivery POSTs to /api/v3/delivery, not /api/v3/delivery/', async () => {
+        const { fetchFn, calls } = fakeFetch({
+            '/api/v3/delivery': () =>
+                json({ data: { id: 'EK-1', state: 'pending', bot: null, arriving: null, pickup: {}, dropoff: {} } }, 201),
+        })
+        const client = createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn })
+        const result = await client.createDelivery({
+            name: 'efk test',
+            pickup: { external_id: 'efk-sandbox-pickup' },
+            dropoff: { external_id: 'efk-sandbox-dropoff' },
+            packages: [],
+            tags: ['test'],
+        })
+        assert.equal(result.ok, true)
+        assert.equal(calls[0]?.url, 'https://remi.kiwi/api/v3/delivery')
+    })
+    it('listDeliveries GETs /api/v3/delivery?limit=N, not /api/v3/delivery/?limit=N', async () => {
+        const { fetchFn, calls } = fakeFetch({ '/api/v3/delivery?limit=2': () => json({ data: [] }) })
+        const result = await createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn }).listDeliveries(2)
+        assert.equal(result.ok, true)
+        assert.equal(calls[0]?.url, 'https://remi.kiwi/api/v3/delivery?limit=2')
+    })
+    it('getDelivery GETs /api/v3/delivery/<id>, unchanged', async () => {
+        const { fetchFn, calls } = fakeFetch({
+            '/api/v3/delivery/EK-1': () =>
+                json({ data: { id: 'EK-1', state: 'pending', bot: null, arriving: null, pickup: {}, dropoff: {} } }),
+        })
+        const result = await createRemiClient({ baseUrl: 'https://remi.kiwi', apiKey: 'k', fetch: fetchFn }).getDelivery('EK-1')
+        assert.equal(result.ok, true)
+        assert.equal(calls[0]?.url, 'https://remi.kiwi/api/v3/delivery/EK-1')
     })
 })
 

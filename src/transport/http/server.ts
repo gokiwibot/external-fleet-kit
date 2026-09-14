@@ -11,9 +11,11 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
 import {
     type BotCommand,
+    botCommandEnvelopeSchema,
     botCommandSchema,
     botPositionSchema,
     type CommandStatus,
+    commandTypeSchema,
     type FleetCapabilities,
     type RejectionCode,
 } from '../../contract/schemas'
@@ -168,8 +170,18 @@ export function createPartnerApp(deps: PartnerAppDeps): Hono {
             return problem(400, 'INVALID_BODY', { detail: 'body is not JSON' })
         }
         const parsed = botCommandSchema.safeParse(body)
-        if (!parsed.success)
+        if (!parsed.success) {
+            // An unrecognised `type` is NOT a malformed body — contract `data.ts:216` reserves 400 for
+            // that and asks for 422 UNSUPPORTED_COMMAND here. Tell the two apart by re-parsing against
+            // the envelope with `type` loosened to a bare string: if the envelope is otherwise sound
+            // and only `type` fails the enum, the type is the one and only problem. If the envelope
+            // itself does not parse, the body was never going to validate regardless of `type`.
+            const envelope = botCommandEnvelopeSchema.safeParse(body)
+            if (envelope.success && !commandTypeSchema.safeParse(envelope.data.type).success) {
+                return problem(422, 'UNSUPPORTED_COMMAND', { detail: `unsupported command type "${envelope.data.type}"` })
+            }
             return problem(400, 'INVALID_BODY', { detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') })
+        }
         const outcome = await deps.onCommand(botId, parsed.data)
         // A resend of a navigation a newer one displaced comes back as a `duplicate` carrying the
         // ledger's own status — `REPLACED` and all. Rendered through the entry, so the branch is on

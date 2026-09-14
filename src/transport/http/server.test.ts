@@ -239,6 +239,43 @@ describe('partner HTTP surface', () => {
         assert.equal(boom.status, 503)
         assert.equal(((await boom.json()) as { code: string }).code, 'DRIVER_ERROR')
     })
+    // Two different failures on the same endpoint, both mapped to a different status by contract
+    // `data.ts:216` and `:451`: an unrecognised `type` on an otherwise well-formed body is 422
+    // UNSUPPORTED_COMMAND, while a body that is malformed on its own terms (missing/invalid fields,
+    // or bad params for a type it DOES name) stays 400 INVALID_BODY. Pinned separately from the
+    // business-level UNSUPPORTED_COMMAND above (a bot declaring no door), which is a different code
+    // path (`onCommand` rejecting), not a schema failure.
+    it('an unrecognised command type answers 422 UNSUPPORTED_COMMAND (RFC 7807), not 400', async () => {
+        const { app, auth } = await harness()
+        const res = await app.request('/bots/ACME-0001/commands', {
+            method: 'POST',
+            headers: { ...auth, 'content-type': 'application/json' },
+            body: JSON.stringify({ id: 'J/unknown-type', type: 'moonwalk', params: {}, issued_at: new Date().toISOString() }),
+        })
+        assert.equal(res.status, 422)
+        assert.equal(res.headers.get('content-type'), 'application/problem+json')
+        const problem = (await res.json()) as { type: string; title: string; status: number; code: string; detail: string }
+        assert.equal(problem.type, 'about:blank')
+        assert.equal(problem.title, 'Unprocessable Entity')
+        assert.equal(problem.status, 422)
+        assert.equal(problem.code, 'UNSUPPORTED_COMMAND')
+        assert.match(problem.detail, /moonwalk/)
+    })
+    it('a genuinely malformed body still answers 400 INVALID_BODY, even when it names a real type', async () => {
+        const { app, auth } = await harness()
+        const post = (body: string) =>
+            app.request('/bots/ACME-0001/commands', { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body })
+        // Missing required fields entirely (no `type`, no `issued_at`).
+        const missingFields = await post('{"id":"J/bad"}')
+        assert.equal(missingFields.status, 400)
+        assert.equal(((await missingFields.json()) as { code: string }).code, 'INVALID_BODY')
+        // A recognised type with params that do not fit it: the type is not the problem, the shape is.
+        const badParams = await post(
+            JSON.stringify({ id: 'J/bad-params', type: 'navigate_to', params: { lat: 'north' }, issued_at: new Date().toISOString() }),
+        )
+        assert.equal(badParams.status, 400)
+        assert.equal(((await badParams.json()) as { code: string }).code, 'INVALID_BODY')
+    })
     it('GET /bots/:id/commands/* reads an id that contains a slash, which every real one does', async () => {
         const { app, auth } = await harness()
         const realId = 'GW-5867/pickup'

@@ -119,6 +119,23 @@ export const botStateSchema = z.strictObject({
 })
 export type BotState = z.output<typeof botStateSchema>
 
+/**
+ * The command envelope with `type` as a bare non-empty string instead of `commandTypeSchema`. It
+ * exists ONLY so the HTTP and MQTT transports can tell two different failures apart before they
+ * answer: a body that is well-formed except for an unrecognised `type` (contract `data.ts:216` —
+ * 422 `UNSUPPORTED_COMMAND`) versus a body that is malformed on its own terms — a missing field, a
+ * bad timestamp, wrong params for the type it does name (400 `INVALID_BODY`). Parse against this
+ * FIRST: if it succeeds but `commandTypeSchema.safeParse(type)` fails, the type is the one and only
+ * problem. If this also fails, the body was never going to validate regardless of `type`.
+ */
+export const botCommandEnvelopeSchema = z.strictObject({
+    id: z.string().min(1),
+    type: z.string().min(1),
+    params: z.record(z.string(), z.unknown()).optional(),
+    issued_at: isoTimestamp,
+    expires_at: isoTimestamp.optional(),
+})
+
 export const botCommandSchema = z
     .strictObject({
         id: z.string().min(1),

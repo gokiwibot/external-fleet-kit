@@ -13,10 +13,6 @@ export function fleetTopic(namespace: string, botId: string, kind: FleetTopicKin
     return `fleet/${namespace}/bot/${botId}/${kind}`
 }
 
-export function fleetCapabilitiesTopic(namespace: string): string {
-    return `fleet/${namespace}/capabilities`
-}
-
 export function fleetClientId(namespace: string, botId: string): string {
     return `fleet-${namespace}-${botId}-hb`
 }

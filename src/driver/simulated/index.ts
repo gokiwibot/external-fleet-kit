@@ -311,7 +311,7 @@ export const SCENARIO_NOTES: Readonly<Record<string, string>> = {
     'low-battery': 'ACME-0001..3 sit at 15/20/21 % and do not drain, to exercise the eligibility threshold on both sides of 20 %.',
     'never-arrives': 'Bots park one metre short of every destination and never confirm arrival.',
     'no-interrupt':
-        'INERT as a scenario: it parses exactly like `default`. The knob it names, `supports_command_interrupt`, is a FLEET capability — set `fleet.supportsCommandInterrupt: false` in `efk.config.ts` (and reprovision with the seed set to false) to see it. Declaring false makes the second navigate_to of a job be rejected with BOT_BUSY.',
+        'INERT as a scenario: it parses exactly like `default`. The knob it names, `supports_command_interrupt`, is a FLEET capability — set `fleet.supportsCommandInterrupt: false` in `efk.config.ts` and restart to see it. Declaring false makes the second navigate_to of a job be rejected with BOT_BUSY.',
     'offline-flapping': 'ACME-0001 is permanently offline and ACME-0002 flaps its link every 20 s; the rest stay connected.',
     'destination-correction': 'Destinations snap to a 0.0002° grid and anything beyond 300 m of the origin is rejected as unreachable.',
 }

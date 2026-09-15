@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { fleetCapabilitiesTopic, fleetCheckClientId, fleetClientId, fleetTopic, parseCommandTopic } from './topics'
+import { fleetCheckClientId, fleetClientId, fleetTopic, parseCommandTopic } from './topics'
 
 describe('topics and client ids', () => {
-    it('builds the four topics of the contract', () => {
+    it('builds the three topics of the contract', () => {
         assert.equal(fleetTopic('acme', 'ACME-0142', 'state'), 'fleet/acme/bot/ACME-0142/state')
         assert.equal(fleetTopic('acme', 'ACME-0142', 'event'), 'fleet/acme/bot/ACME-0142/event')
         assert.equal(fleetTopic('acme', 'ACME-0142', 'command'), 'fleet/acme/bot/ACME-0142/command')
-        assert.equal(fleetCapabilitiesTopic('acme'), 'fleet/acme/capabilities')
     })
 
     it('builds the client id the broker binds to the credential', () => {

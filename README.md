@@ -92,6 +92,84 @@ efk start [--scenario <name>] [--web] [--web-host <host>] [--headless] [--check]
 - `--headless` disables the TUI (Docker, CI) and every line the running fleet produces goes to stderr as JSON — one per event, not just the startup banner. The few sentences that *refuse* a start (an unparseable `.env`, a held lock, a port already taken) and the demo banner stay plain prose, because there is no fleet yet to report on.
 - A second `efk start` in the same directory refuses to run (`.efk.lock`): two instances would publish conflicting `seq`.
 
+What `efk start` actually does, in order — note that the roster comes from remi, not from your config:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant K as efk
+    participant R as remi API
+    participant B as broker (mqtts 8883)
+    participant D as RobotDriver
+    K->>R: GET /api/v3/fleet
+    R-->>K: namespace, transport, cadence
+    K->>R: GET /api/v3/fleet/bots (paged, 200 at a time)
+    R-->>K: your roster
+    Note over K,R: the kit takes no bot list of its own. A bot Robot.com<br/>did not register does not exist for the kit.
+    loop once per bot in the roster
+        K->>D: start()
+        K->>B: CONNECT as fleet-NS-BOT-hb
+        K->>B: SUBSCRIBE fleet/NS/bot/BOT/command
+    end
+    K->>B: PUBLISH fleet/NS/capabilities (retained, and again on every reconnect)
+    Note over K,D: from here a 250 ms tick asks every bot for a snapshot<br/>and publishes the ones the cadence says are due
+```
+
+## The command round trip
+
+There is **no reply message**. remi sends a command; the answer travels back inside the next `BotState`, in `current_command`. This is the single thing most worth understanding before you write a driver:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as remi
+    participant B as broker
+    participant K as kit (FleetManager + CommandLedger)
+    participant D as your RobotDriver
+    R->>B: PUBLISH fleet/NS/bot/BOT/command
+    B->>K: navigate_to, id GW-5867/pickup
+    K->>K: ledger: have I seen this id before?
+    K->>D: navigateTo(...)
+    D-->>K: accepted (synchronously)
+    Note over K,D: your driver answers accept, accept-with-correction or<br/>reject, and nothing else. It never writes to a topic.
+    K->>B: PUBLISH fleet/NS/bot/BOT/state (retained)
+    B->>R: current_command state accepted
+    D-->>K: commandState(id, executing)
+    K->>B: next state carries current_command executing
+    D-->>K: arrived(id)
+    K->>B: PUBLISH fleet/NS/bot/BOT/event (not retained)
+    B->>R: arrived, with command_id
+    D-->>K: commandState(id, succeeded)
+    K->>B: next state carries current_command succeeded
+    Note over K,R: every terminal status is published in at least one state.<br/>They queue oldest first, so a command that starts and finishes<br/>between two ticks is still reported, never skipped.
+```
+
+The gap between the command arriving and the first state that carries it is what the TUI calls the *echo*.
+
+### Why your driver never sees the same command twice
+
+remi sends a command up to **three times**. The ledger, not your driver, is what makes that safe:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as remi
+    participant K as CommandLedger
+    participant D as your driver
+    R->>K: command id GW-5867/pickup, 1st send
+    K->>D: navigateTo(...)
+    D-->>K: accepted
+    K-->>R: current_command accepted
+    R->>K: same id, 2nd send (the first answer never arrived)
+    K-->>R: the recorded status, unchanged
+    Note over K,D: the driver is not called again. accept() and reject()<br/>on a known id record nothing and return what was recorded.
+    R->>K: same id, 3rd send
+    K-->>R: the recorded status, unchanged
+    Note over R,K: after the third send the step fails. That is remi's resend<br/>policy — not something an HTTP status code of yours controls.
+```
+
+A `throw` from your driver is the one case that leaves no record: it answers `503` with `DRIVER_ERROR` in HTTP and leaves `current_command` untouched in MQTT, so remi simply resends the same id under that same policy.
+
 ## `efk order` — create a test delivery
 
 ```
@@ -100,6 +178,29 @@ efk order watch <delivery id>
 ```
 
 Creates a delivery on your sandbox between `SANDBOX_PICKUP_EXTERNAL_ID` and `SANDBOX_DROPOFF_EXTERNAL_ID` (tagged `test`), and follows it until `delivered`. Needs the `delivery` scope (C7). Watch the TUI: `navigate_to` → `accepted` → `executing` → `succeeded`, `set_door`, the second leg, `delivered`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as efk order
+    participant R as remi
+    participant K as your fleet
+    U->>R: POST /api/v3/delivery (pickup and dropoff by external_id, tagged test)
+    R-->>U: delivery id, created
+    R->>R: the assigner picks one of your bots
+    R->>K: navigate_to — pickup
+    K-->>R: accepted, executing, arrived, succeeded
+    R->>K: set_door — open, then close
+    K-->>R: succeeded
+    R->>K: navigate_to — dropoff
+    K-->>R: accepted, executing, arrived, succeeded
+    R->>K: set_door — open, then close
+    K-->>R: succeeded
+    R-->>U: delivered
+    Note over U,R: --watch polls GET /api/v3/delivery/ID until the status is<br/>delivered, canceled or returned
+```
+
+It is the same assigner that dispatches Robot.com's own fleet: nothing in that diagram is a path built for partners.
 
 ## Scenarios — what each knob reproduces
 
@@ -183,6 +284,22 @@ If a log line or an event `detail` looks mangled, one of those three is why. The
 ## HTTP mode and the public URL
 
 Set `REMI_TRANSPORT=http`. The kit serves the five partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `GET /capabilities`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as remi
+    participant K as your kit at HTTP_PUBLIC_URL
+    R->>K: GET /bots (Bearer HTTP_TOKEN)
+    K-->>R: every bot state, current_command included
+    Note over R,K: in polling mode the poll IS the delivery, and it is<br/>the only path that drains the command ledger
+    R->>K: POST /bots/BOT/commands
+    K-->>R: 202 Accepted, never 200
+    R->>K: GET /bots/BOT/commands/GW-5867/pickup
+    K-->>R: the CommandStatus for that id
+    R->>K: POST /destinations/validate
+    K-->>R: reachable, corrected_position, correction_distance_m
+```
 
 One shape to copy rather than re-derive: remi forms a command id as `<job id>/<step>` (`GW-5867/pickup`), so **a command id contains a slash**. The status route is therefore a wildcard (`/bots/:bot_id/commands/*`) and the id is the rest of the path, read with no second `decodeURIComponent` — decoding twice turns a `%2F` that is genuinely part of an id into a separator.
 

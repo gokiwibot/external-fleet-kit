@@ -7,5 +7,25 @@
   "poll_interval_active_ms": 2000,
   "poll_interval_idle_ms": 15000,
   "max_bots": 40,
-  "contract_version": "2026-09"
+  "contract_version": "2026-09",
+  "capabilities": {
+    "supports_command_interrupt": true,
+    "default": {
+      "has_door": true,
+      "supported_commands": [
+        "navigate_to",
+        "cancel_navigation",
+        "set_door"
+      ]
+    },
+    "overrides": {
+      "ACME-0143": {
+        "has_door": false,
+        "supported_commands": [
+          "navigate_to",
+          "cancel_navigation"
+        ]
+      }
+    }
+  }
 }

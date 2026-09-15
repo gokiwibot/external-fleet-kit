@@ -56,6 +56,9 @@ const fleetRetireResponse = z.strictObject({ bot_id: botIdSchema, retired_at: z.
 const pushStateResponse = z.strictObject({ accepted: z.number().int(), rejected: z.number().int() })
 const reportEventResponse = z.strictObject({ accepted: z.literal(true) })
 const fleetPushStateRequest = z.strictObject({ bots: z.array(botStateSchema) })
+// PATCH merges given fields into the capabilities document already on file, so unlike the POST
+// (full replace, `fleetCapabilitiesSchema` bare) the request body may omit any of them.
+const fleetPatchCapabilitiesRequest = fleetCapabilitiesSchema.partial()
 
 /** Which schema each sample (by file name, without .json) must satisfy. Unlisted files fail. */
 export const expectations: Record<string, z.ZodType> = {
@@ -66,7 +69,6 @@ export const expectations: Record<string, z.ZodType> = {
     'partner-validate-destination__request': botPositionSchema,
     'partner-validate-destination__response-200-reachable': destinationValidationSchema,
     'partner-validate-destination__response-200-not-reachable': destinationValidationSchema,
-    'partner-capabilities__response-200': fleetCapabilitiesSchema,
     'partner-get-command__response-200': commandStatusSchema,
     'partner-list-bots__response-200': partnerListBotsResponse,
     'partner-create-command__botstate-current-command-rejected-mqtt-mode': commandStatusSchema,
@@ -84,6 +86,10 @@ export const expectations: Record<string, z.ZodType> = {
     'fleet-report-event__request-arrived': botEventSchema,
     'fleet-report-event__request-blocked': botEventSchema,
     'fleet-report-event__response-202': envelope(reportEventResponse),
+    'fleet-set-capabilities__request': fleetCapabilitiesSchema,
+    'fleet-set-capabilities__response-200': envelope(fleetCapabilitiesSchema),
+    'fleet-patch-capabilities__request': fleetPatchCapabilitiesRequest,
+    'fleet-patch-capabilities__response-200': envelope(fleetCapabilitiesSchema),
     'type-bot-state__botstate': botStateSchema,
     'type-bot-position__botposition': botPositionSchema,
     'type-bot-battery__botbattery': botBatterySchema,

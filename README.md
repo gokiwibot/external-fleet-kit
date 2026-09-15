@@ -85,7 +85,7 @@ Paste the nine lines into any support request. `--json` prints the same report a
 efk start [--scenario <name>] [--web] [--web-host <host>] [--headless] [--check] [--demo]
 ```
 
-- One MQTT connection per bot (client id `fleet-<ns>-<bot_id>-hb`), retained `state`, retained fleet `capabilities`, `event` unretained, `command` subscribed — exactly as the contract's *MQTT mode* section asks.
+- One MQTT connection per bot (client id `fleet-<ns>-<bot_id>-hb`), retained `state`, `event` unretained, `command` subscribed — exactly as the contract's *MQTT mode* section asks. Capabilities are not a topic: the kit sends the document to remi once at start-up (see below).
 - The TUI shows **BOTS** (link, availability, battery, door, current command, age of last state, `seq`, dropped states), **COMMANDS** (newest first; resends of the same id are one row with `×N`; the *echo* column is the time from receiving a command to publishing the first state that carries it in `current_command`), **EVENTS** and **LOG**. `Tab`/`←`/`→` switch sections, `↑`/`↓` select a bot, `q` quits.
 - Manual fault keys on the selected bot (simulated driver only): `a` toggle `available`, `d` open/close the door locally (the human of `manual_close_door`), `o` cycle the link (scenario → pinned down → pinned up → back to the scenario; a `*` in the row means you are holding it), `b` blocked/unblocked.
 - `--web` serves the same four views at `http://127.0.0.1:4310` (SSE, no framework, no map), plus the same manual fault controls the TUI has — available/door/link/blocked — as four `POST /api/bots/:botId/controls/*` routes. This is a deliberate break of design §8 ("TUI, web and log are observers of the bus; no logic lives in them"): the TUI already broke it (manual fault keys), and the web now does too, on purpose, sharing the same extracted logic (`src/core/manual-controls.ts`) so the two interfaces cannot diverge. It binds to loopback by default; **the control routes are only *mounted* when the dashboard is bound to loopback** — on any other host they do not exist (a request 404s, it is not "present but refused") — because this repository is public, so the shape of every endpoint is public knowledge and a startup warning protects nothing. `--web-host 0.0.0.0` still exposes the read-only views and still warns, but now says plainly that state is visible to the network while the controls stay disabled.
@@ -111,7 +111,8 @@ sequenceDiagram
         K->>B: CONNECT as fleet-NS-BOT-hb
         K->>B: SUBSCRIBE fleet/NS/bot/BOT/command
     end
-    K->>B: PUBLISH fleet/NS/capabilities (retained, and again on every reconnect)
+    K->>R: POST /api/v3/fleet/capabilities (once, not retained anywhere)
+    R-->>K: 200, or an error the kit logs and starts on anyway
     Note over K,D: from here a 250 ms tick asks every bot for a snapshot<br/>and publishes the ones the cadence says are due
 ```
 
@@ -283,7 +284,7 @@ If a log line or an event `detail` looks mangled, one of those three is why. The
 
 ## HTTP mode and the public URL
 
-Set `REMI_TRANSPORT=http`. The kit serves the five partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `GET /capabilities`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
+Set `REMI_TRANSPORT=http`. The kit serves the four partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. Capabilities are not one of these: the kit sends that document to remi with `POST /api/v3/fleet/capabilities` once at start-up (see `efk start` above), not served or polled. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
 
 ```mermaid
 sequenceDiagram
@@ -305,7 +306,7 @@ One shape to copy rather than re-derive: remi forms a command id as `<job id>/<s
 
 ## How the contract is kept in sync
 
-`src/contract/` is a vendored copy of the schemas on the contract page. What the kit **emits** is strict (an unknown key fails the parse, because it would be our bug); what remi **returns** is loose (remi adds fields, and a new one must not stop your fleet). `src/contract/samples/` freezes the page's JSON examples — **37 files: 36 extracted from the page plus one written by hand**, the hand-written one named `handmade__*` because the page publishes no 422 problem body — and `SOURCE.json` records the `commit` and the `sha256` of the `data.ts` they came from. The parity test proves the frozen samples still validate against the kit's schemas — it does **not** detect that the page changed; Robot.com's CI does that (it compares the same `sha256`) and publishes a new kit version. `efk --version` prints the kit version, the contract version and the source commit.
+`src/contract/` is a vendored copy of the schemas on the contract page. What the kit **emits** is strict (an unknown key fails the parse, because it would be our bug); what remi **returns** is loose (remi adds fields, and a new one must not stop your fleet). `src/contract/samples/` freezes the page's JSON examples — **40 files: 39 extracted from the page plus one written by hand**, the hand-written one named `handmade__*` because the page publishes no 422 problem body — and `SOURCE.json` records the `commit` and the `sha256` of the `data.ts` they came from. The parity test proves the frozen samples still validate against the kit's schemas — it does **not** detect that the page changed; Robot.com's CI does that (it compares the same `sha256`) and publishes a new kit version. `efk --version` prints the kit version, the contract version and the source commit.
 
 ## Demo mode
 

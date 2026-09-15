@@ -1,0 +1,13 @@
+{
+  "data": {
+    "bot_id": "ACME-0142",
+    "namespace": "acme",
+    "location_id": "V1StGXR8Z5jdHi6BmyT2q",
+    "manual_close_door": false,
+    "commercial_name": "Acme 0142",
+    "tags": [
+      "cooler"
+    ],
+    "retired_at": null
+  }
+}

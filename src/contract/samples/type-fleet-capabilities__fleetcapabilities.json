@@ -1,0 +1,20 @@
+{
+  "supports_command_interrupt": true,
+  "default": {
+    "has_door": true,
+    "supported_commands": [
+      "navigate_to",
+      "cancel_navigation",
+      "set_door"
+    ]
+  },
+  "overrides": {
+    "ACME-0143": {
+      "has_door": false,
+      "supported_commands": [
+        "navigate_to",
+        "cancel_navigation"
+      ]
+    }
+  }
+}

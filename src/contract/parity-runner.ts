@@ -55,6 +55,7 @@ const fleetUpdateBotRequest = z.strictObject({
 const fleetRetireResponse = z.strictObject({ bot_id: botIdSchema, retired_at: z.iso.datetime({ offset: true }) })
 const pushStateResponse = z.strictObject({ accepted: z.number().int(), rejected: z.number().int() })
 const reportEventResponse = z.strictObject({ accepted: z.literal(true) })
+const fleetPushStateRequest = z.strictObject({ bots: z.array(botStateSchema) })
 
 /** Which schema each sample (by file name, without .json) must satisfy. Unlisted files fail. */
 export const expectations: Record<string, z.ZodType> = {
@@ -65,12 +66,20 @@ export const expectations: Record<string, z.ZodType> = {
     'partner-validate-destination__request': botPositionSchema,
     'partner-validate-destination__response-200-reachable': destinationValidationSchema,
     'partner-validate-destination__response-200-not-reachable': destinationValidationSchema,
+    'partner-capabilities__response-200': fleetCapabilitiesSchema,
+    'partner-get-command__response-200': commandStatusSchema,
+    'partner-list-bots__response-200': partnerListBotsResponse,
+    'partner-create-command__botstate-current-command-rejected-mqtt-mode': commandStatusSchema,
     'fleet-update-config__request': fleetUpdateConfigRequest,
     'fleet-register-bot__request': fleetRegisterBotRequest,
     'fleet-register-bot__response-201': envelope(fleetBotResponseSchema),
     'fleet-update-bot__request': fleetUpdateBotRequest,
     'fleet-retire-bot__response-200': envelope(fleetRetireResponse),
     'fleet-list-bots__response-200': fleetBotListResponseSchema,
+    'fleet-get-config__response-200': envelope(fleetConfigResponseSchema),
+    'fleet-update-config__response-200': envelope(fleetConfigResponseSchema),
+    'fleet-update-bot__response-200': envelope(fleetBotResponseSchema),
+    'fleet-push-state__request': fleetPushStateRequest,
     'fleet-push-state__response-202': envelope(pushStateResponse),
     'fleet-report-event__request-arrived': botEventSchema,
     'fleet-report-event__request-blocked': botEventSchema,
@@ -85,18 +94,12 @@ export const expectations: Record<string, z.ZodType> = {
     'type-fleet-config__fleetconfig-response': fleetConfigResponseSchema,
     'type-fleet-bot__fleetbot': fleetRegisterBotRequest,
     'type-fleet-bot-response__fleetbot-response': fleetBotResponseSchema,
-    // Hand-written while N2 is unmerged. The first three carry the name sync-samples will give them
-    // once the page ships them, so re-extraction after the merge produces the same bytes: drop the
-    // `handmade__` prefix from these rows then, and delete the hand-written files. The published
-    // `partner-list-bots` 200 is here too because N2 rewrites it — its two `current_command` objects
-    // ship with no `accepted_at`, which the published `CommandStatus` already declares required — so
-    // the frozen copy comes from the corrected text, not from the page as published, and calling it
-    // `extracted` in SOURCE.json would misdescribe where it came from.
-    // The last one has no page origin at all — the page publishes no 422 problem body — so it stays
-    // hand-written for ever.
-    'handmade__partner-list-bots__response-200': partnerListBotsResponse,
-    'handmade__partner-create-command__botstate-current-command-rejected-mqtt-mode': commandStatusSchema,
-    'handmade__type-fleet-capabilities__fleetcapabilities': fleetCapabilitiesSchema,
+    'type-fleet-capabilities__fleetcapabilities': fleetCapabilitiesSchema,
+    // Three samples used to live here hand-written, because the page elided those bodies behind a
+    // `{ /* Type */ }` shorthand and sync-samples skips anything that is not JSON. The page now
+    // spells them out, re-extraction produced the SAME BYTES as the hand-written copies, and they
+    // have moved up into the extracted rows above. Only this one has no page origin at all — the
+    // page publishes no 422 problem body — so it stays hand-written for ever.
     'handmade__problem-details__422-destination-unreachable': problemDetailsSchema,
 }
 

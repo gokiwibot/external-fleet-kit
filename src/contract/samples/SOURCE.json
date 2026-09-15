@@ -1,9 +1,11 @@
 {
-  "commit": "pending-N2",
-  "sha256": "8770143a386ca0f51f04eb6a13a72302dc72eb3534b09d1b02502972edb28a97",
-  "extractedAt": "2026-09-12T22:49:14.370Z",
+  "commit": "1894f895a",
+  "sha256": "6e7c8cefd9167a079b68e445fd65c0058ee2d0411ce4c0b61d9b297bdeb49b13",
+  "extractedAt": "2026-09-15T05:51:56.218Z",
   "files": [
+    "fleet-get-config__response-200",
     "fleet-list-bots__response-200",
+    "fleet-push-state__request",
     "fleet-push-state__response-202",
     "fleet-register-bot__request",
     "fleet-register-bot__response-201",
@@ -12,11 +14,17 @@
     "fleet-report-event__response-202",
     "fleet-retire-bot__response-200",
     "fleet-update-bot__request",
+    "fleet-update-bot__response-200",
     "fleet-update-config__request",
+    "fleet-update-config__response-200",
+    "partner-capabilities__response-200",
+    "partner-create-command__botstate-current-command-rejected-mqtt-mode",
     "partner-create-command__request-cancel-navigation",
     "partner-create-command__request-navigate-to",
     "partner-create-command__request-set-door-open",
     "partner-create-command__response-202",
+    "partner-get-command__response-200",
+    "partner-list-bots__response-200",
     "partner-validate-destination__request",
     "partner-validate-destination__response-200-not-reachable",
     "partner-validate-destination__response-200-reachable",
@@ -29,14 +37,8 @@
     "type-command-status__commandstatus",
     "type-fleet-bot-response__fleetbot-response",
     "type-fleet-bot__fleetbot",
+    "type-fleet-capabilities__fleetcapabilities",
     "type-fleet-config__fleetconfig-response"
   ],
-  "skipped": [
-    "partner-get-command__response-200",
-    "partner-capabilities__response-200",
-    "fleet-get-config__response-200",
-    "fleet-update-config__response-200",
-    "fleet-update-bot__response-200",
-    "fleet-push-state__request"
-  ]
+  "skipped": []
 }

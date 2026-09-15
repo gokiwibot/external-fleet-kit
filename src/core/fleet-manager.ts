@@ -1,6 +1,6 @@
 /**
  * The fleet manager (design §9): discovers the roster from remi, builds one BotRuntime per bot, wires
- * the transport, publishes the capabilities document, and runs the 250 ms tick that asks each
+ * the transport, sends the capabilities document to remi, and runs the 250 ms tick that asks each
  * runtime whether it has a state to publish. Nothing here knows how a robot moves (driver) or how
  * bytes travel (transport).
  *
@@ -64,7 +64,6 @@ export interface FleetManager {
     driver(botId: string): RobotDriver | undefined
     config(): FleetConfigResponse | null
     capabilities(): FleetCapabilities
-    refreshCapabilities(): Promise<void>
     tickOnce(): Promise<void>
     /**
      * The poll path: the whole fleet's current states, each acknowledged as delivered. This is what
@@ -281,7 +280,15 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
 
             for (const runtime of runtimes) await runtime.start()
             await transport.start(runtimes)
-            await transport.publishCapabilities(buildCapabilities())
+            // A failure here must not stop the fleet: a fleet with no capabilities document on file
+            // still runs on remi's default behaviour, and refusing to start would be a worse outcome
+            // than starting without it.
+            const sent = await deps.remi.setCapabilities(buildCapabilities())
+            if (!sent.ok)
+                deps.bus.emit('log', {
+                    level: 'error',
+                    message: `sending capabilities to remi failed: ${sent.status} ${sent.code}: ${sent.message}; the fleet is starting anyway on remi's default behaviour`,
+                })
             if (tickMs > 0)
                 timer = setInterval(() => {
                     const run = tick()
@@ -317,9 +324,6 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
         driver: (botId) => drivers.get(botId),
         config: () => config,
         capabilities: buildCapabilities,
-        async refreshCapabilities() {
-            await transport?.publishCapabilities(buildCapabilities())
-        },
         tickOnce: tick,
         serve,
     }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import type { serve } from '@hono/node-server'
-import type { BotState } from '../../contract/schemas'
+import type { BotState, FleetCapabilities } from '../../contract/schemas'
 import type { BotRuntime } from '../../core/bot-runtime'
 import { createEventBus } from '../../core/events'
 import { FakeClock, FakeDriver } from '../../core/fakes'
@@ -126,6 +126,7 @@ async function pushHarness() {
                 ? { ok: true as const, data: { accepted: states.length, rejected: 0 } }
                 : { ok: false as const, status: 404, code: 'BOT_NOT_FOUND', message: 'no such fleet' }
         },
+        setCapabilities: async (caps: FleetCapabilities) => ({ ok: true as const, data: caps }),
     } as unknown as RemiClient
     const manager = createFleetManager({
         remi,

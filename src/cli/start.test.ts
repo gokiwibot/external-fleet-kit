@@ -62,7 +62,6 @@ function fakeManager(overrides: Partial<FleetManager> = {}): FleetManager {
         driver: () => undefined,
         config: () => null,
         capabilities: () => ({ supports_command_interrupt: true, default: { has_door: false, supported_commands: [] } }),
-        refreshCapabilities: async () => {},
         tickOnce: async () => {},
         serve: () => [],
         ...overrides,

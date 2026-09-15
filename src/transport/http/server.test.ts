@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import type { BotCommand, BotEvent, BotState, CommandStatus, FleetCapabilities } from '../../contract/schemas'
+import type { BotCommand, BotEvent, BotState, CommandStatus } from '../../contract/schemas'
 import type { CommandOutcome } from '../../core/events'
 import { createEventBus } from '../../core/events'
 import { FakeClock, FakeDriver } from '../../core/fakes'
@@ -58,6 +58,7 @@ function fakeRemi(): RemiClient {
         getDelivery: async () => ({ ok: false, status: 0, code: 'X', message: '' }),
         pushState: async () => ({ ok: true, data: { accepted: 0, rejected: 0 } }),
         reportEvent: async () => ({ ok: true, data: { accepted: true } }),
+        setCapabilities: async (caps) => ({ ok: true, data: caps }),
     }
 }
 
@@ -65,7 +66,6 @@ function fakeRemi(): RemiClient {
 class PollingTransport implements Transport {
     readonly kind = 'http' as const
     handler: ((botId: string, command: BotCommand) => Promise<CommandOutcome>) | null = null
-    capabilities: FleetCapabilities | null = null
     async start() {}
     async stop() {}
     async publishState(_botId: string, _state: BotState) {
@@ -73,9 +73,6 @@ class PollingTransport implements Transport {
     }
     async publishEvent(_botId: string, _event: BotEvent) {
         return false
-    }
-    async publishCapabilities(doc: FleetCapabilities) {
-        this.capabilities = doc
     }
     async flushTick() {}
     onCommand(handler: (botId: string, command: BotCommand) => Promise<CommandOutcome>) {
@@ -113,7 +110,6 @@ async function harness() {
         token: TOKEN,
         bots: () => manager.bots(),
         serve: () => manager.serve(),
-        capabilities: () => manager.capabilities(),
         onCommand: (botId, command) => {
             if (!transport.handler) throw new Error('the manager registered no command handler')
             return transport.handler(botId, command)
@@ -293,10 +289,8 @@ describe('partner HTTP surface', () => {
         assert.equal(((await raw.json()) as { id: string }).id, realId)
         assert.equal((await app.request('/bots/ACME-0001/commands/nope', { headers: auth })).status, 404)
     })
-    it('GET /capabilities and POST /destinations/validate (200, 400 INVALID_COORDINATE)', async () => {
+    it('POST /destinations/validate (200, 400 INVALID_COORDINATE)', async () => {
         const { app, auth } = await harness()
-        const caps = await app.request('/capabilities', { headers: auth })
-        assert.equal(caps.status, 200)
         const ok = await app.request('/destinations/validate', {
             method: 'POST',
             headers: { ...auth, 'content-type': 'application/json' },

@@ -1,9 +1,8 @@
 /**
  * MQTT transport (design §9.4): one connection per bot with the contract's client id, retained state,
- * non-retained events, retained fleet capabilities published by the first connection, command
- * subscription per bot, and exponential backoff with jitter on CONNECT failures. A bot whose driver
- * reports `connected: false` (link offline/flapping) has its connection closed for real, so the
- * broker — not a payload — tells remi it is gone.
+ * non-retained events, command subscription per bot, and exponential backoff with jitter on CONNECT
+ * failures. A bot whose driver reports `connected: false` (link offline/flapping) has its connection
+ * closed for real, so the broker — not a payload — tells remi it is gone.
  *
  * RECOVERY (ruling R3). `reconnectPeriod: 0` means mqtt.js never reconnects on its own, so a broker
  * restart, a kicked session or a network drop would otherwise leave a non-null, DEAD connection in
@@ -13,8 +12,8 @@
  * dead one exactly like a refused CONNECT — end it, announce it, wait out the backoff — which is the
  * same path the design spec asks for on "a rejected CONNECT or a drop".
  */
-import { type BotCommand, type BotEvent, type BotState, botCommandSchema, type FleetCapabilities } from '../../contract/schemas'
-import { fleetCapabilitiesTopic, fleetClientId, fleetTopic, parseCommandTopic } from '../../contract/topics'
+import { type BotCommand, type BotEvent, type BotState, botCommandSchema } from '../../contract/schemas'
+import { fleetClientId, fleetTopic, parseCommandTopic } from '../../contract/topics'
 import type { BotRuntime } from '../../core/bot-runtime'
 import type { CommandOutcome, EventBus } from '../../core/events'
 import { describeThrown } from '../../net-failure'
@@ -53,8 +52,6 @@ export function createMqttTransport(
     const factory = deps.connectionFactory ?? createMqttConnection
     const slots = new Map<string, Slot>()
     let handler: ((botId: string, command: BotCommand) => Promise<CommandOutcome>) | null = null
-    let capabilities: FleetCapabilities | null = null
-    let capabilitiesPublished = false
     let timer: ReturnType<typeof setInterval> | null = null
     const log = (level: 'info' | 'warn' | 'error', message: string, botId?: string) => deps.bus.emit('log', { level, message, botId })
 
@@ -76,11 +73,6 @@ export function createMqttTransport(
     const open = async (slot: Slot) => {
         const botId = slot.runtime.botId
         slot.connecting = true
-        // What the catch below is allowed to claim failed. CONNECT and SUBSCRIBE report themselves
-        // (a rejected promise, a SubscriptionDeniedError); the capabilities publish happens on a
-        // connection that is already up, and saying "CONNECT failed" about it sends the partner to
-        // debug the wrong layer — the credentials are fine, the ACL on one topic is not.
-        let stage: 'connect' | 'capabilities' = 'connect'
         const connection = factory({
             url: deps.url,
             username: deps.username,
@@ -121,15 +113,10 @@ export function createMqttTransport(
             // publishes. It is a no-op on the very first connection, where the runtime's first tick
             // publishes anyway (`lastPublishedAtMs === null`).
             slot.runtime.touch()
-            if (!capabilitiesPublished && capabilities) {
-                stage = 'capabilities'
-                await connection.publish(fleetCapabilitiesTopic(deps.namespace), capabilities, { qos: 1, retain: true })
-                capabilitiesPublished = true
-            }
         } catch (error) {
-            // The capabilities publish above happens AFTER the slot has taken the connection, so a
-            // failure there must give it back: leaving an ended connection in the slot would make
-            // `publishState` answer for a pipe that is closed until the next reconcile notices.
+            // A failure past this point must give the connection back: leaving an ended connection in
+            // the slot would make `publishState` answer for a pipe that is closed until the next
+            // reconcile notices.
             if (slot.connection === connection) slot.connection = null
             await connection.end().catch(() => {})
             const wait = scheduleRetry(slot)
@@ -137,14 +124,8 @@ export function createMqttTransport(
             // mqtt.js composes its text from the connect options it was handed, so quoting it here
             // would put the broker password into the operator's log.
             const message = describeMqttFailure(error)
-            // Four failures that look alike in a log and have nothing else in common.
-            if (stage === 'capabilities') {
-                log(
-                    'error',
-                    `connected, but publishing the fleet capabilities document failed; dropping the connection and retrying in ${wait} ms — CONNECT and the command subscription both succeeded, so check that ${deps.username} may publish to ${fleetCapabilitiesTopic(deps.namespace)}`,
-                    botId,
-                )
-            } else if (error instanceof SubscriptionDeniedError) {
+            // Three failures that look alike in a log and have nothing else in common.
+            if (error instanceof SubscriptionDeniedError) {
                 log(
                     'error',
                     `connected, but the broker refused the command subscription (${error.topic}); retrying in ${wait} ms — the credential is fine, its ACL is not: ask Robot.com to allow fleet/${deps.namespace}/bot/+/command for user ${deps.username}`,
@@ -258,14 +239,6 @@ export function createMqttTransport(
         },
         /** MQTT publishes as it goes; there is no batch to close. */
         async flushTick() {},
-        async publishCapabilities(doc) {
-            capabilities = doc
-            const carrier = [...slots.values()].find((slot) => slot.connection?.isConnected())
-            if (carrier?.connection) {
-                await carrier.connection.publish(fleetCapabilitiesTopic(deps.namespace), doc, { qos: 1, retain: true })
-                capabilitiesPublished = true
-            }
-        },
         onCommand(fn) {
             handler = fn
         },

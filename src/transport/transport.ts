@@ -1,4 +1,4 @@
-import type { BotCommand, BotEvent, BotState, FleetCapabilities } from '../contract/schemas'
+import type { BotCommand, BotEvent, BotState } from '../contract/schemas'
 import type { BotRuntime } from '../core/bot-runtime'
 import type { CommandOutcome } from '../core/events'
 
@@ -17,7 +17,6 @@ export interface Transport {
      */
     publishState(botId: string, state: BotState): Promise<boolean>
     publishEvent(botId: string, event: BotEvent): Promise<boolean>
-    publishCapabilities(doc: FleetCapabilities): Promise<void>
     /** End of tick. The HTTP transport sends its accumulated batch here; MQTT resolves immediately. */
     flushTick(): Promise<void>
     onCommand(handler: (botId: string, command: BotCommand) => Promise<CommandOutcome>): void

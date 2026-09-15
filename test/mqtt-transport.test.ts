@@ -19,8 +19,8 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it, type TestContext } from 'node:test'
-import type { BotEvent, BotState, FleetCapabilities } from '../src/contract/schemas'
-import { fleetCapabilitiesTopic, fleetClientId, fleetTopic } from '../src/contract/topics'
+import type { BotEvent, BotState } from '../src/contract/schemas'
+import { fleetClientId, fleetTopic } from '../src/contract/topics'
 import type { BotRuntime } from '../src/core/bot-runtime'
 import { createEventBus, type KitEvents } from '../src/core/events'
 import { FakeClock, FakeDriver } from '../src/core/fakes'
@@ -152,11 +152,6 @@ const state = (botId: string): BotState => ({
 
 const event = (botId: string): BotEvent => ({ bot_id: botId, type: 'arrived', command_id: 'J/p', occurred_at: new Date().toISOString() })
 
-const CAPABILITIES: FleetCapabilities = {
-    supports_command_interrupt: true,
-    default: { has_door: true, supported_commands: ['navigate_to', 'cancel_navigation', 'set_door'] },
-}
-
 /**
  * Every transport here is stopped through `t.after`, not only at the end of the test body: `start()`
  * arms a reconcile interval, and an assertion that fails before a manual `stop()` would leave that
@@ -205,22 +200,20 @@ describe('mqtt transport', () => {
         )
     })
 
-    it('retains state and capabilities, does not retain events, and publishes the capabilities document once', async (t) => {
+    it('retains state, does not retain events', async (t) => {
         const { broker, start, transport } = setup(t, ['ACME-0001', 'ACME-0002'])
         await start()
         const botState = state('ACME-0001')
         const botEvent = event('ACME-0001')
 
-        await transport.publishCapabilities(CAPABILITIES)
         assert.equal(await transport.publishState('ACME-0001', botState), true)
         assert.equal(await transport.publishEvent('ACME-0001', botEvent), true)
 
         assert.deepEqual(broker.for('ACME-0001').sent, [
-            { topic: fleetCapabilitiesTopic(NS), payload: CAPABILITIES, qos: 1, retain: true },
             { topic: fleetTopic(NS, 'ACME-0001', 'state'), payload: botState, qos: 1, retain: true },
             { topic: fleetTopic(NS, 'ACME-0001', 'event'), payload: botEvent, qos: 1, retain: false },
         ])
-        assert.deepEqual(broker.for('ACME-0002').sent, [], 'the fleet document travels once, not once per bot')
+        assert.deepEqual(broker.for('ACME-0002').sent, [], 'each bot publishes on its own connection only')
     })
 
     it('a command on the bot topic reaches the handler; an invalid or foreign one costs a log line instead', async (t) => {
@@ -307,22 +300,6 @@ describe('mqtt transport', () => {
         assert.match(refusals[0]?.message ?? '', /EMQX 5/)
         assert.match(refusals[0]?.message ?? '', /retrying in 1000 ms/)
         assert.doesNotMatch(messages().join('\n'), /MQTT_USERNAME\/MQTT_PASSWORD/, 'the credential is fine; the broker is the problem')
-    })
-
-    it('a capabilities publish that fails says so, instead of blaming CONNECT', async (t) => {
-        const { broker, messages, start, transport } = setup(t, ['ACME-0001'])
-        broker.policy.denyPublishTo = fleetCapabilitiesTopic(NS)
-        // Known before the first connection, so the document travels inside open() — where a failure
-        // used to be reported as "CONNECT failed" on a CONNECT that had plainly succeeded.
-        await transport.publishCapabilities(CAPABILITIES)
-        await start()
-
-        assert.match(messages().join('\n'), /publishing the fleet capabilities document failed/)
-        assert.match(messages().join('\n'), /CONNECT and the command subscription both succeeded/)
-        assert.match(messages().join('\n'), /may publish to fleet\/acme\/capabilities/)
-        assert.doesNotMatch(messages().join('\n'), /CONNECT failed/, 'CONNECT did not fail; saying so sends the partner to the wrong layer')
-        assert.deepEqual(broker.live, [], 'the connection is dropped and retried through the backoff')
-        assert.equal(await transport.publishState('ACME-0001', state('ACME-0001')), false)
     })
 
     /**

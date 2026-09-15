@@ -6,7 +6,7 @@
  * It is NOT a mode anyone should run against real robots: every answer is invented, nothing reaches
  * remi, and the kit shouts about it in the banner, in the log and in `efk check` C2.
  */
-import type { BotEvent, BotState, FleetBotMirror, FleetConfigResponse } from '../contract/schemas'
+import type { BotEvent, BotState, FleetBotMirror, FleetCapabilities, FleetConfigResponse } from '../contract/schemas'
 import type { Delivery, RemiClient } from '../remi/client'
 
 export const DEMO_ROSTER = ['ACME-0001', 'ACME-0002', 'ACME-0003']
@@ -41,5 +41,6 @@ export function createFakeRemiClient(opts: { roster?: string[]; namespace?: stri
         getDelivery: async () => ({ ok: true, data: delivery }),
         pushState: async (states: BotState[]) => ({ ok: true, data: { accepted: states.length, rejected: 0 } }),
         reportEvent: async (_event: BotEvent) => ({ ok: true, data: { accepted: true } }),
+        setCapabilities: async (caps: FleetCapabilities) => ({ ok: true, data: caps }),
     }
 }

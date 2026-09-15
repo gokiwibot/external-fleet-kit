@@ -1,7 +1,7 @@
 /**
  * The only remi surface the kit touches (umbrella §3.3): fleet config, the bot mirror, deliveries
- * for `efk order`, and the two push endpoints. Never PATCH /fleet, never the roster endpoints.
- * `fetch` is injected so every test runs without a network.
+ * for `efk order`, the two push endpoints, and the capabilities document. Never PATCH /fleet, never
+ * the roster endpoints. `fetch` is injected so every test runs without a network.
  */
 import { z } from 'zod'
 import {
@@ -9,8 +9,10 @@ import {
     type BotState,
     envelope,
     type FleetBotMirror,
+    type FleetCapabilities,
     type FleetConfigResponse,
     fleetBotListResponseSchema,
+    fleetCapabilitiesSchema,
     fleetConfigResponseSchema,
     problemDetailsSchema,
 } from '../contract/schemas'
@@ -60,6 +62,7 @@ export interface RemiClient {
     getDelivery(id: string): Promise<Result<Delivery>>
     pushState(states: BotState[]): Promise<Result<{ accepted: number; rejected: number }>>
     reportEvent(event: BotEvent): Promise<Result<{ accepted: true }>>
+    setCapabilities(caps: FleetCapabilities): Promise<Result<FleetCapabilities>>
 }
 
 /** remi's own cap on `POST /api/v3/fleet/state`: at most this many states per HTTP request. */
@@ -184,6 +187,10 @@ export function createRemiClient(deps: { baseUrl: string; apiKey: string; fetch?
         },
         async reportEvent(event) {
             const result = await call('POST', '/api/v3/fleet/events', envelope(z.looseObject({ accepted: z.literal(true) })), event)
+            return result.ok ? { ok: true, data: result.data.data } : result
+        },
+        async setCapabilities(caps) {
+            const result = await call('POST', '/api/v3/fleet/capabilities', envelope(fleetCapabilitiesSchema), caps)
             return result.ok ? { ok: true, data: result.data.data } : result
         },
     }

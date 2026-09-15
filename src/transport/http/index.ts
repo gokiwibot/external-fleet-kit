@@ -1,5 +1,5 @@
 import { type ServerType, serve } from '@hono/node-server'
-import type { BotCommand, BotEvent, BotState, FleetCapabilities } from '../../contract/schemas'
+import type { BotCommand, BotEvent, BotState } from '../../contract/schemas'
 import type { BotRuntime } from '../../core/bot-runtime'
 import type { CommandOutcome, EventBus } from '../../core/events'
 import type { ServedState } from '../../core/fleet-manager'
@@ -36,7 +36,6 @@ export type HttpTransportDeps = {
 export function createHttpTransport(deps: HttpTransportDeps): Transport {
     let server: ServerType | null = null
     let runtimes: BotRuntime[] = []
-    let capabilities: FleetCapabilities = { supports_command_interrupt: true, default: { has_door: false, supported_commands: [] } }
     const push = deps.push && deps.remi ? createPushClient({ remi: deps.remi, bus: deps.bus }) : null
     let handler: ((botId: string, command: BotCommand) => Promise<CommandOutcome>) | null = null
     /** The tick's states, each with the runtime that will be told when — and only when — they land. */
@@ -59,7 +58,6 @@ export function createHttpTransport(deps: HttpTransportDeps): Transport {
                 // simply did not happen in HTTP mode.
                 bots: () => runtimes,
                 serve: deps.serveFleet,
-                capabilities: () => capabilities,
                 onCommand: (botId, command) => {
                     if (handler) return handler(botId, command)
                     const runtime = runtimes.find((r) => r.botId === botId)
@@ -151,9 +149,6 @@ export function createHttpTransport(deps: HttpTransportDeps): Transport {
                 })
             }
             pushDelivering = delivered
-        },
-        async publishCapabilities(doc) {
-            capabilities = doc
         },
         onCommand(fn) {
             handler = fn

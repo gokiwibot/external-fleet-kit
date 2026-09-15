@@ -1,11 +1,12 @@
 /**
- * The five endpoints of "Endpoints you implement" (design §9.5). Bearer HTTP_TOKEN; 202 and never 200
- * on a command; 4xx with the contract codes; 503 DRIVER_ERROR when the driver threw. That 503 does
- * NOT make remi retry — the contract declares no 5xx policy, and saying otherwise in a public repo
- * would be teaching the partner something false. It leaves the command unanswered, and the re-send
- * arrives through the resend policy remi already has (the same id, up to three sends, `data.ts:211`).
- * `POST /destinations/validate` is answered by the first bot's driver: it is a fleet question and must
- * give the same answer for the same coordinate.
+ * The remaining endpoints of "Endpoints you implement" (design §9.5) — `/capabilities` is gone; remi
+ * now stores the document instead of polling for it (`RemiClient.setCapabilities`). Bearer
+ * HTTP_TOKEN; 202 and never 200 on a command; 4xx with the contract codes; 503 DRIVER_ERROR when the
+ * driver threw. That 503 does NOT make remi retry — the contract declares no 5xx policy, and saying
+ * otherwise in a public repo would be teaching the partner something false. It leaves the command
+ * unanswered, and the re-send arrives through the resend policy remi already has (the same id, up to
+ * three sends, `data.ts:211`). `POST /destinations/validate` is answered by the first bot's driver:
+ * it is a fleet question and must give the same answer for the same coordinate.
  */
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
@@ -16,7 +17,6 @@ import {
     botPositionSchema,
     type CommandStatus,
     commandTypeSchema,
-    type FleetCapabilities,
     type RejectionCode,
 } from '../../contract/schemas'
 import type { BotRuntime } from '../../core/bot-runtime'
@@ -37,7 +37,6 @@ export type PartnerAppDeps = {
      * never learn how a command ended and its job steps would hang until they timed out.
      */
     serve: () => ServedState[]
-    capabilities: () => FleetCapabilities
     /** Where a command goes. The transport wires this to whatever the FleetManager registered. */
     onCommand: (botId: string, command: BotCommand) => Promise<CommandOutcome>
     bus: EventBus
@@ -213,8 +212,6 @@ export function createPartnerApp(deps: PartnerAppDeps): Hono {
         if (!entry) return problem(404, 'COMMAND_NOT_FOUND')
         return c.json(publicStatus(entry))
     })
-
-    app.get('/capabilities', (c) => c.json(deps.capabilities()))
 
     /**
      * A fleet-wide question, answered by the first bot's driver: the contract requires the same

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import type { BotState } from '../contract/schemas'
+import type { BotState, FleetCapabilities } from '../contract/schemas'
 import { createRemiClient } from './client'
 
 type Call = { url: string; init?: RequestInit }
@@ -222,6 +222,25 @@ describe('remi client', () => {
         assert.equal(result.ok, false)
         assert.equal(!result.ok && result.code, 'UPSTREAM_DOWN')
         assert.deepEqual(sizes, [200, 200], 'the first chunk was sent, the third (after the failure) never was')
+    })
+    it('setCapabilities posts the document to remi', async () => {
+        const calls: Array<{ path: string; method: string; body: unknown }> = []
+        const client = createRemiClient({
+            baseUrl: 'https://remi.test',
+            apiKey: `live_sk_${'0'.repeat(48)}`,
+            fetch: async (url, init) => {
+                calls.push({ path: new URL(url as string).pathname, method: init?.method ?? 'GET', body: JSON.parse(String(init?.body)) })
+                return new Response(JSON.stringify({ data: JSON.parse(String(init?.body)) }), { status: 200 })
+            },
+        })
+        const caps: FleetCapabilities = {
+            supports_command_interrupt: true,
+            default: { has_door: true, supported_commands: ['navigate_to'] },
+            overrides: {},
+        }
+        const r = await client.setCapabilities(caps)
+        assert.equal(r.ok, true)
+        assert.deepEqual(calls[0], { path: '/api/v3/fleet/capabilities', method: 'POST', body: caps })
     })
 })
 

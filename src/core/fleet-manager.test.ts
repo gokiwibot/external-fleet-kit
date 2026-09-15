@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import type { BotCommand, BotState, FleetCapabilities } from '../contract/schemas'
+import type { BotCommand, BotState } from '../contract/schemas'
 import type { CommandOutcome } from '../core/events'
 import type { RemiClient } from '../remi/client'
 import type { Transport } from '../transport/transport'
@@ -50,6 +50,7 @@ function fakeRemi(overrides: Partial<RemiClient> = {}): RemiClient {
         getDelivery: async () => ({ ok: false, status: 0, code: 'X', message: '' }),
         pushState: async () => ({ ok: true, data: { accepted: 0, rejected: 0 } }),
         reportEvent: async () => ({ ok: true, data: { accepted: true } }),
+        setCapabilities: async (caps) => ({ ok: true, data: caps }),
         ...overrides,
     }
 }
@@ -57,7 +58,6 @@ function fakeRemi(overrides: Partial<RemiClient> = {}): RemiClient {
 class FakeTransport implements Transport {
     readonly kind = 'mqtt' as const
     states: BotState[] = []
-    capabilities: FleetCapabilities | null = null
     started: string[] = []
     flushes = 0
     /** Flip to false to imitate a bot the link policy has taken offline. */
@@ -77,9 +77,6 @@ class FakeTransport implements Transport {
     }
     async publishEvent() {
         return this.delivers
-    }
-    async publishCapabilities(doc: FleetCapabilities) {
-        this.capabilities = doc
     }
     async flushTick() {
         this.flushes += 1
@@ -142,17 +139,12 @@ const live = (id: string): BotCommand => ({
 })
 
 describe('fleet manager', () => {
-    it('discovers the roster, caps it at max_bots, starts one driver per bot and publishes capabilities', async () => {
+    it('discovers the roster, caps it at max_bots and starts one driver per bot', async () => {
         const { manager, transport, drivers } = harness()
         const result = await manager.start()
         assert.deepEqual(result, { ok: true, roster: ['ACME-0001', 'ACME-0002'] })
         assert.deepEqual([...drivers.keys()], ['ACME-0001', 'ACME-0002'])
         assert.deepEqual(transport.started, ['ACME-0001', 'ACME-0002'])
-        assert.equal(transport.capabilities?.supports_command_interrupt, true)
-        assert.deepEqual(transport.capabilities?.default, {
-            has_door: true,
-            supported_commands: ['navigate_to', 'cancel_navigation', 'set_door'],
-        })
         assert.equal(transport.namespaceSeen, 'acme', 'the transport is built with the namespace remi gave us, never an empty string')
         assert.equal(manager.driver('ACME-0001'), drivers.get('ACME-0001'))
         assert.equal(manager.driver('ACME-0009'), undefined)
@@ -177,17 +169,35 @@ describe('fleet manager', () => {
         assert.equal(result.ok === false && result.detail.includes('FLEET_NOT_CONFIGURED'), true)
     })
     it('puts per-bot capability differences in overrides', async () => {
-        const { manager, transport, drivers } = harness()
-        // The first driver defines `default`; make the second differ before start publishes.
-        const original = drivers
+        const { manager, drivers } = harness()
+        // The first driver defines `default`; make the second differ, then read the pure getter.
         await manager.start()
-        const second = original.get('ACME-0002')
+        const second = drivers.get('ACME-0002')
         assert.ok(second)
         second.caps = { has_door: false, supported_commands: ['navigate_to', 'cancel_navigation'] }
-        await manager.refreshCapabilities()
-        assert.deepEqual(transport.capabilities?.overrides, {
+        assert.deepEqual(manager.capabilities().overrides, {
             'ACME-0002': { has_door: false, supported_commands: ['navigate_to', 'cancel_navigation'] },
         })
+    })
+    it('the manager sends capabilities to remi once at start', async () => {
+        const sent: unknown[] = []
+        const remi = fakeRemi({
+            setCapabilities: async (caps) => {
+                sent.push(caps)
+                return { ok: true as const, data: caps }
+            },
+        })
+        const { manager } = harness(remi)
+        await manager.start()
+        assert.equal(sent.length, 1, 'exactly one send at start-up, not one per bot')
+    })
+    it('a failed capabilities send does not stop the fleet from starting', async () => {
+        const remi = fakeRemi({
+            setCapabilities: async () => ({ ok: false as const, status: 503, code: 'UNAVAILABLE', message: 'down' }),
+        })
+        const { manager } = harness(remi)
+        const started = await manager.start()
+        assert.equal(started.ok, true, 'a fleet with no capabilities on file runs on the default behaviour')
     })
     it('a start that fails builds no fleet, so a retry does not stack a second one', async () => {
         let badDriver = true
@@ -368,7 +378,6 @@ describe('fleet manager shutdown', () => {
                 return true
             },
             publishEvent: async () => true,
-            publishCapabilities: async () => {},
             flushTick: async () => {},
             onCommand: () => {},
         }

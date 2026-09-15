@@ -4,3 +4,4 @@ dist
 .efk-state.json
 .efk.lock
 *.log
+.superpowers

@@ -72,6 +72,14 @@ type SteppedDriver = RobotDriver & { tick(nowMs: number): void }
 const isStepped = (driver: RobotDriver | undefined): driver is SteppedDriver =>
     typeof (driver as SteppedDriver | undefined)?.tick === 'function'
 
+/**
+ * Where the lock and the counters live. `.` — the cwd — is the clone's own directory, which is what a
+ * partner running `efk start` expects; in a container the code sits in an immutable `/app` and the
+ * state has to land on the mounted volume, so EFK_STATE_DIR points it there. Only the STATE moves:
+ * `efk.config.ts`, the scenarios and the driver are still read from the cwd.
+ */
+export const statePath = (name: string): string => resolve(process.env.EFK_STATE_DIR ?? '.', name)
+
 export function start(options: StartOptions): Promise<number> {
     return startWith(options, {
         createEventBus,
@@ -84,8 +92,8 @@ export function start(options: StartOptions): Promise<number> {
         createStateStore,
         runCheck,
         listScenarios,
-        lockPath: resolve('.efk.lock'),
-        statePath: resolve('.efk-state.json'),
+        lockPath: statePath('.efk.lock'),
+        statePath: statePath('.efk-state.json'),
         checkDelayMs: 10_000,
     })
 }

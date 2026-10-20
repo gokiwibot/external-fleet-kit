@@ -127,6 +127,14 @@ export function createPartnerApp(deps: PartnerAppDeps): Hono {
     const app = new Hono()
     const authorised = bearerCheck(deps.token)
 
+    /**
+     * BEFORE the bearer middleware, and that order is the whole point: hono runs middleware in
+     * registration order, and a load balancer's health check usually sends no headers at all, so a
+     * /healthz behind the guard would answer 401 and the container would never become ready. It says
+     * nothing about the fleet — liveness of this process only.
+     */
+    app.get('/healthz', (c) => c.json({ ok: true }))
+
     app.use('*', async (c, next) => {
         // One answer for "no token" and for "wrong token": telling them apart tells a caller probing
         // the surface which half of the guess was right. The token itself is never echoed anywhere.

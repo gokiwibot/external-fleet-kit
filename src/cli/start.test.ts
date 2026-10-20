@@ -18,7 +18,7 @@ import { createStateStore } from '../core/state-store'
 import type { CheckDeps, CheckReport } from './check'
 import { type Env, loadEnv } from './env'
 import type { LockResult } from './lock'
-import { DEMO_BANNER, type StartDeps, type StartOptions, startWith } from './start'
+import { DEMO_BANNER, type StartDeps, type StartOptions, startWith, statePath } from './start'
 
 const envSource = {
     REMI_API_URL: 'https://remi.invalid',
@@ -414,5 +414,25 @@ describe('efk start', () => {
         h.quit()?.()
         assert.equal(await running, 0)
         assert.equal(process.listenerCount('SIGINT'), before, 'and gone afterwards')
+    })
+})
+
+describe('EFK_STATE_DIR', () => {
+    const before = process.env.EFK_STATE_DIR
+    afterEach(() => {
+        if (before === undefined) delete process.env.EFK_STATE_DIR
+        else process.env.EFK_STATE_DIR = before
+    })
+
+    it("puts the lock and the counters in the container's volume when it is set", () => {
+        process.env.EFK_STATE_DIR = '/tmp/efk-state-dir-test'
+        assert.equal(statePath('.efk.lock'), '/tmp/efk-state-dir-test/.efk.lock')
+        assert.equal(statePath('.efk-state.json'), '/tmp/efk-state-dir-test/.efk-state.json')
+    })
+
+    it('falls back to the cwd, which is what a partner running a clone expects', () => {
+        delete process.env.EFK_STATE_DIR
+        assert.equal(statePath('.efk.lock'), join(process.cwd(), '.efk.lock'))
+        assert.equal(statePath('.efk-state.json'), join(process.cwd(), '.efk-state.json'))
     })
 })

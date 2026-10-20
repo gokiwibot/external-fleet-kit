@@ -1,0 +1,6 @@
+node_modules
+.git
+.env
+.superpowers
+.efk-state.json
+.efk.lock

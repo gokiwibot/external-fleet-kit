@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+Absorbed from the first fork of the kit that drives real robots. Only what any partner needs; that fork's own driver stays in the fork.
+
+### Added
+- `Dockerfile`, `docker/entrypoint.sh` and `.dockerignore`; README section *Running it in a container*.
+- `EFK_STATE_DIR` moves `.efk.lock` and `.efk-state.json` onto a volume. Declared in the `.env` schema.
+- `GET /healthz` on the HTTP surface, before the bearer check, for probes that send no headers. It says the process is listening, nothing about the fleet.
+
+### Documentation
+- The kit is single-instance (`replicas: 1`, `Recreate`, `ReadWriteOncePod`), and the README now says so.
+
 ## [0.1.0] - unreleased
 
 The date of this entry is set when the `0.1.0` tag is cut.

@@ -127,6 +127,13 @@ describe('partner HTTP surface', () => {
         assert.equal((await app.request('/bots')).status, 401)
         assert.equal((await app.request('/bots', { headers: { authorization: 'Bearer nope' } })).status, 401)
     })
+    it('/healthz answers without a bearer, and nothing else does', async () => {
+        const { app } = await harness()
+        const health = await app.request('/healthz')
+        assert.equal(health.status, 200, 'a load-balancer health check sends no headers; behind the guard this would be a 401')
+        assert.deepEqual(await health.json(), { ok: true })
+        assert.equal((await app.request('/bots')).status, 401, 'and the exemption did not leak onto the fleet surface')
+    })
     it('401 says the same thing whether the token is missing or wrong, and never echoes it', async () => {
         const { app } = await harness()
         const absent = await (await app.request('/bots')).text()

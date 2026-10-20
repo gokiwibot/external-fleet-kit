@@ -38,6 +38,13 @@ export const envSchema = z
         LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
         /** Scenario name for the simulated driver; `--scenario` sets it. Declared so it is not an undocumented magic variable. */
         EFK_SCENARIO: z.string().min(1).default('default'),
+        /**
+         * Where `.efk.lock` and `.efk-state.json` live; the cwd when unset, `/state` in the image. Declared
+         * here so it is not an undocumented magic variable, but `start.ts` reads it straight from
+         * `process.env` through `statePath`, and that is deliberate: the lock is taken BEFORE the `.env`
+         * is loaded, so a second instance is refused even when the file does not parse.
+         */
+        EFK_STATE_DIR: z.string().min(1).optional(),
     })
     .superRefine((env, ctx) => {
         if (env.REMI_TRANSPORT === 'mqtt') {

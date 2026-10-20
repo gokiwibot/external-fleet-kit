@@ -90,7 +90,7 @@ efk start [--scenario <name>] [--web] [--web-host <host>] [--headless] [--check]
 - Manual fault keys on the selected bot (simulated driver only): `a` toggle `available`, `d` open/close the door locally (the human of `manual_close_door`), `o` cycle the link (scenario → pinned down → pinned up → back to the scenario; a `*` in the row means you are holding it), `b` blocked/unblocked.
 - `--web` serves the same four views at `http://127.0.0.1:4310` (SSE, no framework, no map), plus the same manual fault controls the TUI has — available/door/link/blocked — as four `POST /api/bots/:botId/controls/*` routes. This is a deliberate break of design §8 ("TUI, web and log are observers of the bus; no logic lives in them"): the TUI already broke it (manual fault keys), and the web now does too, on purpose, sharing the same extracted logic (`src/core/manual-controls.ts`) so the two interfaces cannot diverge. It binds to loopback by default; **the control routes are only *mounted* when the dashboard is bound to loopback** — on any other host they do not exist (a request 404s, it is not "present but refused") — because this repository is public, so the shape of every endpoint is public knowledge and a startup warning protects nothing. `--web-host 0.0.0.0` still exposes the read-only views and still warns, but now says plainly that state is visible to the network while the controls stay disabled.
 - `--headless` disables the TUI (Docker, CI) and every line the running fleet produces goes to stderr as JSON — one per event, not just the startup banner. The few sentences that *refuse* a start (an unparseable `.env`, a held lock, a port already taken) and the demo banner stay plain prose, because there is no fleet yet to report on.
-- A second `efk start` in the same directory refuses to run (`.efk.lock`): two instances would publish conflicting `seq`.
+- A second `efk start` in the same directory refuses to run (`.efk.lock`): two instances would publish conflicting `seq`. **The design is single-instance**: one process per fleet. Two replicas behind a load balancer would each keep their own `seq` counters and command ledger, and remi would discard half the states as stale and see commands its sender never accepted. If you deploy it, deploy one replica with a strategy that stops the old one before starting the new (Kubernetes: `replicas: 1`, `strategy: Recreate`, and a `ReadWriteOncePod` volume — `ReadWriteOnce` limits by *node*, not by pod).
 
 What `efk start` actually does, in order — note that the roster comes from remi, not from your config:
 
@@ -284,7 +284,7 @@ If a log line or an event `detail` looks mangled, one of those three is why. The
 
 ## HTTP mode and the public URL
 
-Set `REMI_TRANSPORT=http`. The kit serves the four partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. Capabilities are not one of these: the kit sends that document to remi with `POST /api/v3/fleet/capabilities` once at start-up (see `efk start` above), not served or polled. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
+Set `REMI_TRANSPORT=http`. The kit serves the four partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. `GET /healthz` is the one unauthenticated route (see [Running it in a container](#running-it-in-a-container)). Capabilities are not one of these: the kit sends that document to remi with `POST /api/v3/fleet/capabilities` once at start-up (see `efk start` above), not served or polled. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
 
 ```mermaid
 sequenceDiagram
@@ -303,6 +303,18 @@ sequenceDiagram
 ```
 
 One shape to copy rather than re-derive: remi forms a command id as `<job id>/<step>` (`GW-5867/pickup`), so **a command id contains a slash**. The status route is therefore a wildcard (`/bots/:bot_id/commands/*`) and the id is the rest of the path, read with no second `decodeURIComponent` — decoding twice turns a `%2F` that is genuinely part of an id into a separator.
+
+## Running it in a container
+
+`docker build -t my-fleet:dev .` builds one image that runs `efk start --headless` on port `4300`. The install is `--prod=false` on purpose: the kit has no build step, it runs on `tsx`, which is a devDependency, and a production install gives an image that cannot execute a line.
+
+There is no `.env` in the image. Every variable of [the `.env` you receive](#the-env-you-receive) is read from the environment (`efk` merges `process.env` over the file, and the file is simply absent), so the deployment supplies them as a secret. One variable exists only here:
+
+- **`EFK_STATE_DIR`** (`/state` in the image) — where `.efk.lock` and `.efk-state.json` are written. `/app` is immutable, and the `seq` counters must survive a restart: a counter that resets to 1 makes remi discard every state that follows as older than what it already has. Mount a volume there.
+
+The entrypoint removes a leftover `.efk.lock` before starting. Its owner-is-alive check cannot work across containers — pid 1 always exists in a fresh one — so a lock left by a killed predecessor would refuse every restart for ever. That is safe **only** with one replica and a strategy that stops the old container first (see *single-instance* under `efk start`); with two replicas the lock would be doing its job and deleting it would be the bug.
+
+`GET /healthz` (HTTP mode) is served **without** the bearer token, because a load balancer's health probe usually sends no headers; every other route still requires it. It answers `{"ok":true}` **unconditionally**: the process is listening, nothing more. It is not a deployment gate. Read the logs, or run `efk check`, to know whether the fleet is actually driving robots.
 
 ## How the contract is kept in sync
 

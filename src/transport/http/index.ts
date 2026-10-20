@@ -74,6 +74,12 @@ export function createHttpTransport(deps: HttpTransportDeps): Transport {
             server = (deps.serve ?? serve)({ fetch: app.fetch, port: deps.port, hostname: '0.0.0.0' })
             deps.bus.emit('log', { level: 'info', message: `partner HTTP surface listening on 0.0.0.0:${deps.port}` })
         },
+        // The app reads the fleet through `bots: () => runtimes`, so replacing the array is the whole
+        // update: the next `GET /bots` answers with the fleet as it is now, and a command for a bot
+        // that has just left gets the same `unknown bot` a never-registered one gets.
+        async setBots(bots) {
+            runtimes = bots
+        },
         async stop() {
             if (batch.length > 0) {
                 // NOT flushed on the way out, and above all not confirmed: these states never reached

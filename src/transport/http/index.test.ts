@@ -147,6 +147,7 @@ async function pushHarness() {
         seq: createSeq(createStateStore(join(dir, '.efk-state.json'))),
         now: clock.now,
         tickMs: 0,
+        rosterRefreshMs: 0,
     })
     const started = await manager.start()
     assert.equal(started.ok, true)

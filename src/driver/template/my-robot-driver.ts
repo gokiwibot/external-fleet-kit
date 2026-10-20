@@ -19,6 +19,11 @@
  *  - Log the id YOUR API gives the mission next to remi's command id when you create it. When an
  *    outcome looks wrong ("succeeded" far from the destination), that id is the only thing your own
  *    support can look up.
+ *  - If your API refuses the kit's call because a credential is missing, say so from the factory's
+ *    `unavailable()` (see DriverFactory), not by throwing per bot: the fleet starts idle and says
+ *    it once.
+ *  - The factory receives `fleetSerial` when remi maps this bot to an id of YOUR system; null means
+ *    your serial is the bot id minus the fleet prefix.
  */
 import type { DestinationValidation } from '../../contract/schemas'
 import {

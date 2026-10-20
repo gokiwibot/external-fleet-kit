@@ -218,6 +218,35 @@ export function createMqttTransport(
                 reconcile().catch((error: unknown) => log('error', `reconcile failed: ${describeThrown(error)}`))
             }, deps.reconcileMs ?? 1_000)
         },
+        /**
+         * One connection per bot, so a roster change is a slot change. A bot that left gets its
+         * connection closed — leaving it open would keep a subscription alive for commands nobody
+         * can answer — and a bot whose runtime object was REBUILT (a remap: same id, different
+         * robot) is closed too, because the slot's link policy and `touch()` reach through that
+         * object and the old one now describes a robot this bot no longer drives. The link policy's
+         * own loop does the connecting, exactly as it does at `start`.
+         */
+        async setBots(bots) {
+            const wanted = new Map(bots.map((b) => [b.botId, b]))
+            for (const [botId, slot] of [...slots]) {
+                const runtime = wanted.get(botId)
+                if (runtime && runtime === slot.runtime) continue
+                await close(slot, runtime ? 'rebuilt for a new fleet_serial' : 'left the roster')
+                slots.delete(botId)
+            }
+            for (const runtime of bots) {
+                if (slots.has(runtime.botId)) continue
+                slots.set(runtime.botId, {
+                    runtime,
+                    connection: null,
+                    attempt: 0,
+                    retryAt: 0,
+                    wants: () => runtime.snapshot().connected,
+                    connecting: false,
+                })
+            }
+            await reconcile()
+        },
         async stop() {
             if (timer) clearInterval(timer)
             timer = null

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import type { BotCommand, BotState } from '../contract/schemas'
+import type { BotCommand, BotState, FleetConfigResponse } from '../contract/schemas'
 import type { CommandOutcome } from '../core/events'
 import type { RemiClient } from '../remi/client'
 import type { Transport } from '../transport/transport'
@@ -11,7 +11,7 @@ import { IDLE_HEARTBEAT_MS } from './cadence'
 import { MAX_UNPUBLISHED_TERMINALS } from './command-ledger'
 import { createEventBus, type EventBus } from './events'
 import { FakeClock, FakeDriver } from './fakes'
-import { createFleetManager } from './fleet-manager'
+import { createFleetManager, selectRoster } from './fleet-manager'
 import { createSeq, type Seq } from './seq'
 import { createStateStore } from './state-store'
 
@@ -69,6 +69,10 @@ class FakeTransport implements Transport {
     async start(bots: { botId: string }[]) {
         this.started = bots.map((b) => b.botId)
     }
+    /** The manager's roster loop tells the transport who it serves now; the test reads it from `started`. */
+    async setBots(bots: { botId: string }[]) {
+        this.started = bots.map((b) => b.botId)
+    }
     async stop() {}
     async publishState(_botId: string, state: BotState) {
         if (!this.delivers) return false
@@ -91,6 +95,10 @@ function harness(remi = fakeRemi(), bus: EventBus = createEventBus(), driverVers
     const transport = new FakeTransport()
     const drivers = new Map<string, FakeDriver>()
     const warnings: string[] = []
+    /** Every driver the manager asked for, in order, with the `fleet_serial` it was built against. */
+    const built: Array<{ botId: string; fleetSerial: string | null }> = []
+    /** Bots whose driver was stopped — a roster drop and a remap both go through here. */
+    const stopped: string[] = []
     bus.on('log', (l) => {
         if (l.level === 'warn') warnings.push(l.message)
     })
@@ -102,11 +110,17 @@ function harness(remi = fakeRemi(), bus: EventBus = createEventBus(), driverVers
             transport.namespaceSeen = config.namespace
             return transport
         },
-        driverFor: (botId) => {
+        driverFor: (botId, fleetSerial) => {
             const d = new FakeDriver(botId)
             // `driverVersion` is the literal 1 on the fake; the start-time gate needs a test that can
             // make one bot answer something else.
             Object.assign(d, { driverVersion: driverVersionFor(botId) })
+            built.push({ botId, fleetSerial })
+            const stop = d.stop.bind(d)
+            d.stop = async () => {
+                stopped.push(botId)
+                await stop()
+            }
             drivers.set(botId, d)
             return d
         },
@@ -117,8 +131,11 @@ function harness(remi = fakeRemi(), bus: EventBus = createEventBus(), driverVers
         seq: createSeq(createStateStore(join(dir, '.efk-state.json')), { setTimer: (fn, ms) => setTimeout(fn, ms).unref() }),
         now: clock.now,
         tickMs: 0,
+        // The loop is driven by hand through `reconcileOnce()`: a live interval would hold the test
+        // process open, and a wall-clock cadence would make these tests timing-dependent.
+        rosterRefreshMs: 0,
     })
-    return { manager, transport, drivers, clock, warnings }
+    return { manager, transport, drivers, clock, warnings, built, stopped }
 }
 
 /** A command remi issued that is already past its deadline: rejected without ever reaching the driver. */
@@ -138,6 +155,56 @@ const live = (id: string): BotCommand => ({
     issued_at: new Date(1_799_999_000_000).toISOString(),
 })
 
+describe('selectRoster', () => {
+    const row = (id: string, extra: Partial<{ fleet_serial: string | null; blocked_by: string[] }> = {}) => ({
+        bot_id: id,
+        fleet_serial: null,
+        blocked_by: [] as string[],
+        ...extra,
+    })
+
+    it('applies the cap BEFORE the mapping gate: a bot nobody drives cannot park the fleet', () => {
+        // The opposite was reproduced in review: 49 good bots plus one unmapped row past max_bots, and
+        // the whole fleet went idle for a robot that was never going to be driven.
+        const roster = [row('ACME-0173', { fleet_serial: 'SN-0001' }), row('ACME-0175', { fleet_serial: 'SN-0002' }), row('ACME-9999')]
+        const s = selectRoster(roster, { requiresFleetSerial: true, maxBots: 2 })
+        assert.deepEqual(
+            s.serve.map((b) => b.botId),
+            ['ACME-0173', 'ACME-0175'],
+        )
+        assert.deepEqual(s.unmapped, [], 'the unmapped row is beyond the cap, so it is not our problem')
+    })
+
+    it('still parks the fleet when an unmapped bot IS within the cap', () => {
+        const s = selectRoster([row('ACME-0173', { fleet_serial: 'SN-0001' }), row('ACME-9999')], {
+            requiresFleetSerial: true,
+            maxBots: 10,
+        })
+        assert.deepEqual(s.unmapped, ['ACME-9999'])
+    })
+
+    it('drops retired rows, so a live bot may reuse a retired one\u2019s serial', () => {
+        // remi allows the reuse; the preflight used to call it a duplicate because it built drivers
+        // for retired bots too.
+        const roster = [
+            row('ACME-0001', { fleet_serial: 'SN-0001', blocked_by: ['retired'] }),
+            row('ACME-0002', { fleet_serial: 'SN-0001' }),
+        ]
+        const s = selectRoster(roster, { requiresFleetSerial: true, maxBots: 10 })
+        assert.deepEqual(s.active, ['ACME-0002'])
+        assert.deepEqual(
+            s.serve.map((b) => b.fleetSerial),
+            ['SN-0001'],
+        )
+        assert.deepEqual(s.unmapped, [])
+    })
+
+    it('ignores mappings entirely when the fleet does not require them', () => {
+        const s = selectRoster([row('ACME-0001')], { requiresFleetSerial: false, maxBots: 10 })
+        assert.deepEqual(s.unmapped, [])
+    })
+})
+
 describe('fleet manager', () => {
     it('discovers the roster, caps it at max_bots and starts one driver per bot', async () => {
         const { manager, transport, drivers } = harness()
@@ -151,11 +218,161 @@ describe('fleet manager', () => {
         await manager.stop()
         assert.deepEqual(manager.bots(), [], 'stop() empties the runtimes: a second start must not stack a second fleet on top')
     })
-    it('refuses to start on an empty roster', async () => {
-        const { manager } = harness(fakeRemi({ listFleetBots: async () => ({ ok: true, data: [] }) }))
+    it('starts IDLE on an empty roster: no runtimes, still registered with remi, and says so once', async () => {
+        // The whole point of the idle start: a pod can be deployed and verified before anyone has
+        // registered a bot against the fleet. It must come up, tell remi it exists, and publish
+        // nothing — not refuse, which is what made a deployment impossible to check on its own.
+        let sentCapabilities = false
+        const { manager, transport, warnings } = harness(
+            fakeRemi({
+                listFleetBots: async () => ({ ok: true, data: [] }),
+                setCapabilities: async (caps) => {
+                    sentCapabilities = true
+                    return { ok: true, data: caps }
+                },
+            }),
+        )
         const result = await manager.start()
-        assert.equal(result.ok === false && result.reason, 'empty_roster')
+        assert.deepEqual(result, { ok: true, roster: [] })
+        assert.deepEqual(manager.bots(), [], 'no runtimes exist')
+        assert.deepEqual(transport.started, [], 'the transport is up, with nothing to carry')
+        assert.deepEqual(manager.serve(), [], 'a poll answers an empty fleet rather than failing')
+        // NOT registered: with no runtimes the document would say `has_door: false` and
+        // `supported_commands: []` for the whole fleet, and remi would drop every `set_door` and turn
+        // `manual_close_door` on for good. An idle start leaves whatever remi already holds standing.
+        assert.equal(sentCapabilities, false, 'an idle fleet does not overwrite the capabilities document')
+        assert.equal(warnings.filter((w) => w.startsWith('idle:')).length, 1, 'said once, and actionable')
+        await manager.tickOnce()
+        assert.deepEqual(transport.states, [], 'an idle fleet publishes nothing')
+        await manager.stop()
     })
+    it('starts IDLE when the fleet requires fleet_serial and a bot has none, naming the bots', async () => {
+        // Reachable only for a row registered BEFORE remi got the flag: remi refuses such a
+        // registration now. The whole fleet parks rather than driving the mapped bots, because the
+        // unmapped one would address `0002` — the id minus the prefix — which is nobody's robot.
+        let builtBots = 0
+        const bus = createEventBus()
+        const warnings: string[] = []
+        bus.on('log', (l) => {
+            if (l.level === 'warn') warnings.push(l.message)
+        })
+        const dir = mkdtempSync(join(tmpdir(), 'efk-'))
+        dirs.push(dir)
+        const manager = createFleetManager({
+            remi: fakeRemi({
+                getFleetConfig: async () => ({ ok: true, data: { ...config, requires_fleet_serial: true } }),
+                listFleetBots: async () => ({
+                    ok: true,
+                    data: [{ ...mirror('ACME-0001'), fleet_serial: 'SN-0001' }, mirror('ACME-0002')],
+                }),
+            }),
+            transportFor: () => new FakeTransport(),
+            driverFor: (botId) => {
+                builtBots += 1
+                throw new Error(`driverFor must not be called while a bot is unmapped (${botId})`)
+            },
+            fleet: { supportsCommandInterrupt: true },
+            env: { transport: 'mqtt' },
+            bus,
+            seq: createSeq(createStateStore(join(dir, '.efk-state.json')), { setTimer: (fn, ms) => setTimeout(fn, ms).unref() }),
+            now: new FakeClock().now,
+            tickMs: 0,
+            rosterRefreshMs: 0,
+        })
+
+        const result = await manager.start()
+        assert.deepEqual(result, { ok: true, roster: [] }, 'idle, not a failure')
+        assert.equal(builtBots, 0, 'not even the mapped bot is built: partial success is the failure mode')
+        const idle = warnings.filter((w) => w.startsWith('idle:'))
+        assert.equal(idle.length, 1, 'said once')
+        assert.match(idle[0] ?? '', /ACME-0002/, 'names the offending bot so it can be fixed')
+        assert.doesNotMatch(idle[0] ?? '', /ACME-0001/, 'does not blame the bot that is fine')
+        await manager.stop()
+    })
+    it('drives normally when every bot of a mapping-required fleet has its fleet_serial', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'efk-'))
+        dirs.push(dir)
+        const manager = createFleetManager({
+            remi: fakeRemi({
+                getFleetConfig: async () => ({ ok: true, data: { ...config, requires_fleet_serial: true } }),
+                listFleetBots: async () => ({ ok: true, data: [{ ...mirror('ACME-0001'), fleet_serial: 'SN-0001' }] }),
+            }),
+            transportFor: () => new FakeTransport(),
+            driverFor: (botId, fleetSerial) => {
+                assert.equal(fleetSerial, 'SN-0001', 'the mapping reaches the driver factory')
+                return new FakeDriver(botId)
+            },
+            fleet: { supportsCommandInterrupt: true },
+            env: { transport: 'mqtt' },
+            bus: createEventBus(),
+            seq: createSeq(createStateStore(join(dir, '.efk-state.json')), { setTimer: (fn, ms) => setTimeout(fn, ms).unref() }),
+            now: new FakeClock().now,
+            tickMs: 0,
+            rosterRefreshMs: 0,
+        })
+        const result = await manager.start()
+        assert.deepEqual(result, { ok: true, roster: ['ACME-0001'] })
+        await manager.stop()
+    })
+    it('starts IDLE when the driver is not configured, even with a full roster, and never builds a bot', async () => {
+        // THE NORMAL CASE, not an edge one. Ops registers the bots in remi web on the day of the
+        // onboarding; the partner's API credentials arrive when the partner sends them. In between,
+        // the roster is full and there is nothing to talk to. This used to throw once per bot out of
+        // `driverFor`. If it ever throws again, this test is what fails.
+        let sentCapabilities = false
+        let builtBots = 0
+        const bus = createEventBus()
+        const warnings: string[] = []
+        bus.on('log', (l) => {
+            if (l.level === 'warn') warnings.push(l.message)
+        })
+        const dir = mkdtempSync(join(tmpdir(), 'efk-'))
+        dirs.push(dir)
+        const manager = createFleetManager({
+            remi: fakeRemi({
+                setCapabilities: async (caps) => {
+                    sentCapabilities = true
+                    return { ok: true, data: caps }
+                },
+            }),
+            transportFor: () => new FakeTransport(),
+            driverFor: (botId) => {
+                builtBots += 1
+                throw new Error(`driverFor must not be called while the driver is unavailable (${botId})`)
+            },
+            driverUnavailable: () => 'the credentials are not configured (ACME_API_KEY: required)',
+            fleet: { supportsCommandInterrupt: true },
+            env: { transport: 'mqtt' },
+            bus,
+            seq: createSeq(createStateStore(join(dir, '.efk-state.json')), { setTimer: (fn, ms) => setTimeout(fn, ms).unref() }),
+            now: new FakeClock().now,
+            tickMs: 0,
+            rosterRefreshMs: 0,
+        })
+
+        const result = await manager.start()
+        assert.deepEqual(result, { ok: true, roster: [] }, 'idle, not a failure')
+        assert.equal(builtBots, 0, 'not one driver is built: the credentials outrank the roster')
+        assert.deepEqual(manager.bots(), [])
+        assert.equal(sentCapabilities, false, 'no runtimes, no capabilities document: the empty one is worse than none')
+        const idle = warnings.filter((w) => w.startsWith('idle:'))
+        assert.equal(idle.length, 1, 'said once')
+        const [message] = idle
+        assert.ok(message?.includes('ACME_API_KEY'), 'names the missing variable')
+        assert.ok(message?.includes('3 bot(s) are registered and waiting'), 'and how many bots are waiting')
+        await manager.tickOnce()
+        await manager.stop()
+    })
+
+    it('builds the fleet normally once the driver reports itself available', async () => {
+        // The reverse path: `unavailable` answering null must leave the existing behaviour untouched.
+        const { manager, drivers } = harness()
+        const result = await manager.start()
+        assert.deepEqual(result, { ok: true, roster: ['ACME-0001', 'ACME-0002'] })
+        assert.equal(drivers.size, 2)
+        await manager.stop()
+    })
+
     it('refuses to start when remi expects the other transport', async () => {
         const { manager } = harness(fakeRemi({ getFleetConfig: async () => ({ ok: true, data: { ...config, transport: 'http' } }) }))
         const result = await manager.start()
@@ -370,6 +587,7 @@ describe('fleet manager shutdown', () => {
         })
         const transport: Transport = {
             kind: 'mqtt',
+            setBots: async () => {},
             start: async () => {},
             stop: async () => {},
             publishState: async () => {
@@ -393,6 +611,7 @@ describe('fleet manager shutdown', () => {
             seq,
             now: clock.now,
             tickMs: 5,
+            rosterRefreshMs: 0,
         })
         await manager.start()
 
@@ -413,5 +632,167 @@ describe('fleet manager shutdown', () => {
         release()
         await stopping
         assert.deepEqual(order, ['seq.next', 'seq.flush'], 'the counter is consumed first, and the flush that follows carries it to disk')
+    })
+})
+
+/**
+ * The roster loop. What every one of these asserts, in the end, is the same promise: a change made in
+ * remi reaches this process without anybody restarting it — the way it would reach a partner running
+ * their own implementation of the contract, who never had our roster frozen in the first place.
+ */
+describe('roster refresh', () => {
+    const rows = (...ids: Array<[string, string | null]>) => ids.map(([bot_id, fleet_serial]) => ({ ...mirror(bot_id), fleet_serial }))
+
+    /** A remi whose roster is whatever the test last assigned, so a pass can see a different fleet. */
+    function movingRemi(initial: ReturnType<typeof rows>, fleet: Partial<FleetConfigResponse> = {}) {
+        const state = { roster: initial, capabilities: 0, down: false }
+        const remi = fakeRemi({
+            getFleetConfig: async () =>
+                state.down
+                    ? ({ ok: false, status: 503, code: 'UNAVAILABLE', message: 'remi is down' } as const)
+                    : ({ ok: true, data: { ...config, ...fleet } } as const),
+            listFleetBots: async () => ({ ok: true, data: state.roster }),
+            setCapabilities: async (caps) => {
+                state.capabilities += 1
+                return { ok: true, data: caps }
+            },
+        })
+        return { remi, state }
+    }
+
+    it('drives a bot registered after the fleet came up idle, with no restart', async () => {
+        const { remi, state } = movingRemi([])
+        const h = harness(remi)
+        assert.equal((await h.manager.start()).ok, true)
+        assert.deepEqual(h.manager.bots(), [], 'an empty roster starts idle')
+        // Nothing to describe, so nothing is registered: an empty capabilities document would tell
+        // remi these robots have no door and take no commands.
+        assert.equal(state.capabilities, 0)
+
+        state.roster = rows(['ACME-0001', null])
+        await h.manager.reconcileOnce()
+
+        assert.deepEqual(
+            h.manager.bots().map((b) => b.botId),
+            ['ACME-0001'],
+        )
+        assert.deepEqual(h.transport.started, ['ACME-0001'], 'the transport serves the fleet as it is now')
+        assert.equal(state.capabilities, 1, 'a fleet that now has a bot registers what it can do')
+        await h.manager.stop()
+    })
+
+    it('stops driving a bot that left the roster, and releases its driver', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', null], ['ACME-0002', null]))
+        const h = harness(remi)
+        await h.manager.start()
+
+        state.roster = rows(['ACME-0001', null])
+        await h.manager.reconcileOnce()
+
+        assert.deepEqual(
+            h.manager.bots().map((b) => b.botId),
+            ['ACME-0001'],
+        )
+        assert.deepEqual(h.stopped, ['ACME-0002'], 'the driver is stopped, not merely forgotten')
+        assert.equal(h.manager.driver('ACME-0002'), undefined)
+        await h.manager.stop()
+    })
+
+    it('rebuilds a remapped bot against its new serial, and leaves its neighbour alone', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', 'ROBOT-A'], ['ACME-0002', 'ROBOT-B']))
+        const h = harness(remi)
+        await h.manager.start()
+        const neighbour = h.manager.bots().find((b) => b.botId === 'ACME-0002')
+
+        state.roster = rows(['ACME-0001', 'ROBOT-C'], ['ACME-0002', 'ROBOT-B'])
+        await h.manager.reconcileOnce()
+
+        assert.deepEqual(h.built.at(-1), { botId: 'ACME-0001', fleetSerial: 'ROBOT-C' })
+        assert.deepEqual(h.stopped, ['ACME-0001'], 'only the remapped bot is torn down')
+        assert.equal(
+            h.manager.bots().find((b) => b.botId === 'ACME-0002'),
+            neighbour,
+            'the untouched bot keeps its runtime, and with it its ledger',
+        )
+        await h.manager.stop()
+    })
+
+    it('does not rebuild a bot that is running a command, and picks it up once it is free', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', 'ROBOT-A']))
+        const h = harness(remi)
+        await h.manager.start()
+        const before = h.manager.bots()[0]
+        assert.ok(h.transport.handler)
+        await h.transport.handler('ACME-0001', live('cmd-1'))
+
+        state.roster = rows(['ACME-0001', 'ROBOT-C'])
+        await h.manager.reconcileOnce()
+
+        assert.equal(h.manager.bots()[0], before, 'the mission in flight outranks the remap')
+        assert.deepEqual(h.stopped, [])
+        assert.ok(
+            h.warnings.some((w) => w.includes('deferred') && w.includes('ACME-0001')),
+            `expected a deferral warning, got ${JSON.stringify(h.warnings)}`,
+        )
+
+        // The command finishes; the next pass applies the change that was waiting.
+        await h.transport.handler('ACME-0001', {
+            id: 'cmd-2',
+            type: 'cancel_navigation',
+            issued_at: new Date(1_799_999_000_000).toISOString(),
+        })
+        await h.manager.reconcileOnce()
+        assert.deepEqual(h.built.at(-1), { botId: 'ACME-0001', fleetSerial: 'ROBOT-C' })
+        await h.manager.stop()
+    })
+
+    it('skips an unmapped bot instead of parking the fleet that is already driving', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', 'ROBOT-A']), { requires_fleet_serial: true })
+        const h = harness(remi)
+        await h.manager.start()
+
+        state.roster = rows(['ACME-0001', 'ROBOT-A'], ['ACME-0002', null])
+        await h.manager.reconcileOnce()
+
+        assert.deepEqual(
+            h.manager.bots().map((b) => b.botId),
+            ['ACME-0001'],
+            'the mapped robot keeps driving; only the bad row is left out',
+        )
+        assert.deepEqual(h.stopped, [])
+        await h.manager.stop()
+    })
+
+    it('keeps driving the roster it has when remi cannot be reached', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', null]))
+        const h = harness(remi)
+        await h.manager.start()
+        const before = h.manager.bots()[0]
+
+        // remi goes down AND the roster it would have answered is empty: a refresh that took the
+        // failure at face value would take the whole fleet off the road.
+        state.down = true
+        state.roster = []
+        await h.manager.reconcileOnce()
+
+        assert.equal(h.manager.bots()[0], before)
+        assert.deepEqual(h.stopped, [])
+        assert.ok(
+            h.warnings.some((w) => w.includes('roster refresh skipped')),
+            `expected a skip warning, got ${JSON.stringify(h.warnings)}`,
+        )
+        await h.manager.stop()
+    })
+
+    it('registers capabilities once while they do not change', async () => {
+        const { remi, state } = movingRemi(rows(['ACME-0001', null]))
+        const h = harness(remi)
+        await h.manager.start()
+        assert.equal(state.capabilities, 1)
+
+        await h.manager.reconcileOnce()
+        await h.manager.reconcileOnce()
+        assert.equal(state.capabilities, 1, 'an unchanged document is not sent again every pass')
+        await h.manager.stop()
     })
 })

@@ -379,15 +379,25 @@ export function simulated(options: SimulatedFactoryOptions): DriverFactory<Simul
             : options.scenario
     const seed = options.seed ?? 'efk'
     const randomFor = options.randomFor ?? ((botId: string) => seededRandom(`${seed}:${botId}`))
-    const factory: DriverFactory<SimulatedRobotDriver> = (botId, env) =>
-        createSimulatedDriver({
+    const factory: DriverFactory<SimulatedRobotDriver> = (botId, env) => {
+        // `env.origin` is optional now (the SANDBOX_* are), and THIS driver is the one that cannot do
+        // without it: it spawns bots around that point and measures every destination from it. Said
+        // here, when the bot is built, rather than by the kit refusing to start — a real driver never
+        // reads it, so a missing origin is only an error for the drivers that do.
+        const origin = scenario.fleet.origin ?? env.origin
+        if (!origin)
+            throw new Error(
+                'the simulated driver needs a fleet origin: set SANDBOX_CENTER_LAT and SANDBOX_CENTER_LNG in the .env, or give the scenario its own fleet.origin',
+            )
+        return createSimulatedDriver({
             botId,
             scenario: botScenarioFor(scenario, botId),
-            origin: scenario.fleet.origin ?? env.origin,
+            origin,
             scatterRadiusM: scenario.fleet.scatterRadiusM,
             now: options.now ?? Date.now,
             random: randomFor(botId),
         })
+    }
     factory.auditRoster = (roster) => overrideIdsNotIn(scenario, roster)
     return factory
 }

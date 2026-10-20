@@ -13,8 +13,9 @@ import type { KitConfig } from '../config'
 import { hasBotIdPrefix, isValidBotId } from '../contract/ids'
 import { fleetCheckClientId, fleetTopic } from '../contract/topics'
 import { CONTRACT_VERSION } from '../contract/version'
+import { selectRoster } from '../core/fleet-manager'
 import type { RemiClient } from '../remi/client'
-import type { Env } from './env'
+import { type Env, sandboxOrigin } from './env'
 
 export type RuleId = 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'C7' | 'C8' | 'C9'
 export type RuleStatus = 'PASS' | 'WARN' | 'FAIL' | 'SKIP'
@@ -136,6 +137,12 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
         })
 
     let roster: string[] = []
+    /**
+     * remi's `fleet_serial` per bot, so C9 builds drivers exactly as `start` does. Without it the
+     * preflight resolves a DIFFERENT serial from the one production will use for a mapped bot, and
+     * a diagnostic that disagrees with the real startup is worse than no diagnostic.
+     */
+    let fleetSerials = new Map<string, string | null>()
 
     if (!deps.env) {
         flag('C1', 'FAIL', {
@@ -247,12 +254,26 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                 add('C4', 'SKIP', 'needs the roster')
             } else {
                 const bots = list.data
-                roster = bots.map((b) => b.bot_id)
+                // The SAME selection `efk start` makes, not a second opinion: retired rows out, cap
+                // applied, mapping gate evaluated on what is actually driven. A preflight that
+                // disagrees with the start is worse than no preflight — it passed a roster the start
+                // parks, and failed on a retired bot whose serial its live replacement legitimately
+                // reuses.
+                const selection = selectRoster(bots, {
+                    requiresFleetSerial: cfg.requires_fleet_serial ?? false,
+                    maxBots: cfg.max_bots,
+                })
+                roster = selection.serve.map((b) => b.botId)
+                fleetSerials = new Map(selection.serve.map((b) => [b.botId, b.fleetSerial]))
                 const bad = bots.filter((b) => !isValidBotId(b.bot_id) || !hasBotIdPrefix(b.bot_id, cfg.bot_id_prefix)).map((b) => b.bot_id)
                 const unplaced = bots.filter((b) => b.location_id === null).map((b) => b.bot_id)
-                const elsewhere = bots
-                    .filter((b) => b.location_id !== null && b.location_id !== env.SANDBOX_LOCATION_ID)
-                    .map((b) => b.bot_id)
+                // Only meaningful when there IS a sandbox to compare against. With SANDBOX_LOCATION_ID
+                // unset — the normal state of a production fleet — every placed bot would otherwise
+                // be reported as sitting somewhere else, which is a warning about nothing.
+                const elsewhere =
+                    env.SANDBOX_LOCATION_ID === undefined
+                        ? []
+                        : bots.filter((b) => b.location_id !== null && b.location_id !== env.SANDBOX_LOCATION_ID).map((b) => b.bot_id)
                 const retired = bots.filter((b) => b.blocked_by.includes('retired')).map((b) => b.bot_id)
                 // Same reasoning as C2: collect, then report. The old `else if` chain hid every problem
                 // after the first, which on a fresh provisioning is exactly when there are several.
@@ -262,6 +283,11 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                     rosterFails.push({
                         text: 'Robot.com has not registered your bots yet (0 bots) —',
                         remedy: 'ask Robot.com to register them; there is nothing to change on your side',
+                    })
+                if (selection.unmapped.length)
+                    rosterFails.push({
+                        text: `this fleet requires fleet_serial and these have none: ${selection.unmapped.join(', ')} — efk start will run idle and drive nothing —`,
+                        remedy: 'ask Robot.com to set each bot\u2019s fleet_serial to the id your own system uses for that robot',
                     })
                 if (bad.length)
                     rosterFails.push({
@@ -290,7 +316,14 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                     })
                 if (rosterFails.length > 0) flag('C3', 'FAIL', ...rosterFails)
                 else if (rosterWarns.length > 0) flag('C3', 'WARN', ...rosterWarns)
-                else add('C3', 'PASS', `${bots.length} bots registered and placed in ${env.SANDBOX_LOCATION_ID}`)
+                else
+                    add(
+                        'C3',
+                        'PASS',
+                        env.SANDBOX_LOCATION_ID === undefined
+                            ? `${bots.length} bots registered`
+                            : `${bots.length} bots registered and placed in ${env.SANDBOX_LOCATION_ID}`,
+                    )
 
                 const blocked = bots.filter((b) => b.blocked_by.length > 0)
                 if (blocked.length === 0) add('C4', 'PASS', 'every bot is assignable')
@@ -432,15 +465,22 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
             text: `efk.config.ts did not load: ${deps.configError ?? 'unknown error'} —`,
             remedy: 'check the file is at the root of the directory you ran `efk` from and default-exports defineConfig({ driver, fleet })',
         })
-    else if (!deps.env) add('C9', 'SKIP', 'needs SANDBOX_CENTER_* from the .env')
+    else if (!deps.env) add('C9', 'SKIP', 'needs a .env that parses')
     else if (roster.length === 0) add('C9', 'SKIP', 'needs the roster (see C3)')
+    // Asked before building anything, same as `efk start`. Without it every bot would be reported as
+    // "driver factory threw", under a remedy that says `efk start` would fail on the same bot — which
+    // stopped being true when an unconfigured driver became an idle start rather than a failure.
+    else if (deps.config.driver.unavailable?.())
+        add('C9', 'SKIP', `${deps.config.driver.unavailable()}; \`efk start\` would run idle, driving no robot`)
     else {
-        const origin = { lat: deps.env.SANDBOX_CENTER_LAT, lng: deps.env.SANDBOX_CENTER_LNG }
+        // The same origin `efk start` uses. A driver that needs one says so itself, and the `catch`
+        // below reports it against the bot — which is exactly what C9 is for.
+        const origin = sandboxOrigin(deps.env)
         const c9Fails: Finding[] = []
         const c9Warns: Finding[] = []
         for (const botId of roster) {
             try {
-                const driver = deps.config.driver(botId, { origin })
+                const driver = deps.config.driver(botId, { origin, fleetSerial: fleetSerials.get(botId) ?? null })
                 if (driver.driverVersion !== 1) {
                     c9Fails.push({
                         text: `${botId}: driver implements version ${String(driver.driverVersion)};`,

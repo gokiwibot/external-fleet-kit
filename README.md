@@ -44,8 +44,8 @@ Robot.com generates it; you only fill in `MQTT_PASSWORD` if it was sent separate
 | `REMI_TRANSPORT` | `mqtt` (default) or `http` |
 | `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `MQTT_PASSWORD` | broker credentials for your fleet (`mqtts`, 8883) |
 | `HTTP_TOKEN`, `HTTP_PORT`, `HTTP_PUBLIC_URL` | HTTP mode only: the Bearer token remi sends you, the local port, and the public `https` URL remi calls. In the `.env` you receive these three are commented out and **replace** the MQTT block above, they are not added to it |
-| `SANDBOX_LOCATION_ID` | your sandbox location; your bots are placed there |
-| `SANDBOX_CENTER_LAT`, `SANDBOX_CENTER_LNG` | where simulated bots appear (remi never sends positions to a partner) |
+| `SANDBOX_LOCATION_ID` | **optional** — your sandbox location; your bots are placed there. `efk order` needs it |
+| `SANDBOX_CENTER_LAT`, `SANDBOX_CENTER_LNG` | **optional** — where simulated bots appear (remi never sends positions to a partner). The simulated driver needs them; a real driver ignores them |
 | `SANDBOX_PICKUP_EXTERNAL_ID`, `SANDBOX_DROPOFF_EXTERNAL_ID` | the sandbox points `efk order` uses |
 | `WEB_PORT` | local dashboard port (4310) |
 | `HTTP_PUSH`, `LOG_LEVEL`, `EFK_SCENARIO` | optional, kit-only: push state instead of being polled (HTTP mode); log level; which bundled scenario the simulated driver runs (`--scenario` sets it) |
@@ -53,6 +53,7 @@ Robot.com generates it; you only fill in `MQTT_PASSWORD` if it was sent separate
 Two things about that file that cost people an afternoon if nobody says them:
 
 - **`MQTT_PASSWORD` arrives empty on purpose.** Provisioning hands the broker password over out of band, so the line is present and blank in the file you receive, and the schema accepts it blank — a `.env` that failed to parse here would turn "you still have to paste the broker password" into "your `.env` is broken". `efk check` C1 is what tells you to paste it, with the runbook step.
+- **The `SANDBOX_*` block describes a test sandbox, and a production fleet has none.** Leave it out and `efk start` runs your driver without it. An *empty* value counts as absent, never as zero: a half-filled `SANDBOX_CENTER_LAT=` would otherwise read as latitude 0, off the coast of Africa, and the fleet would be placed there silently.
 - **`HTTP_PUSH=1` does not mean true.** Only the literal string `true` (any casing) enables push; `1`, `yes` and `on` all read as `false`, silently. The same goes for every other boolean in the file.
 
 The kit **does not** take a list of bots: it reads your roster from `GET /api/v3/fleet/bots`. A bot Robot.com did not register does not exist for the kit.
@@ -69,13 +70,13 @@ Nine rules, each `PASS`, `WARN`, `FAIL` or `SKIP`, each with a plain-language fi
 |---|---|---|
 | C1 | `.env` parses and is complete | copy the file Robot.com sent you; the message names the missing variable. `MQTT_PASSWORD` arrives separately, so the commonest FAIL here is "it is empty: paste the broker credential" |
 | C2 | `GET /api/v3/fleet` answers and matches your `.env` | 401: bad key · 403: key lacks `fleet` · 404 `FLEET_NOT_CONFIGURED`: Robot.com has not configured your fleet yet · transport or namespace mismatch (your `MQTT_USERNAME` implies a namespace remi does not agree with) · demo mode active · WARN if the contract version differs from the kit's |
-| C3 | roster is non-empty, ids are well-formed, bots sit in your sandbox location | 0 bots: Robot.com has not registered them yet · WARN per bot not yet placed |
+| C3 | roster is non-empty, ids are well-formed, bots sit in your sandbox location (only checked when `SANDBOX_LOCATION_ID` is set); judged on the same selection `efk start` drives (retired rows out, `max_bots` applied) | 0 bots: Robot.com has not registered them yet · the fleet requires `fleet_serial` and a bot has none · WARN per bot not yet placed |
 | C4 | `blocked_by` per bot, explained | never FAIL: only meaningful while `efk start` runs (`efk start --check` runs it after 10 s) |
 | C5 | MQTT CONNECT + SUBSCRIBE with a diagnostic client id (`fleet-<ns>-check-<random>-hb`) | credential or client id refused · WARN if the broker downgraded the subscription to QoS 0 |
 | C6 | HTTP mode: `GET HTTP_PUBLIC_URL/bots` with your token returns every bot | always at most WARN: this proves your server is up, **not** that remi can reach it |
 | C7 | the key has the `delivery` scope (`GET /api/v3/delivery/?limit=1`) | WARN: you can simulate but `efk order` will not work; ask Robot.com |
 | C8 | the frozen samples still validate against the vendored schemas | the kit itself is inconsistent; open an issue |
-| C9 | `efk.config.ts` loads; a driver is built **for every bot in your roster** (never started) and each is `driverVersion: 1`, declares capabilities and `validateDestination` | update your driver to v1 · WARN if a driver declares a door but not `set_door`, or if a scenario override names a bot you do not have |
+| C9 | `efk.config.ts` loads; a driver is built **for every bot in your roster**, with the same `fleetSerial` `efk start` passes (never started; SKIP while the factory's `unavailable()` says it cannot build yet) and each is `driverVersion: 1`, declares capabilities and `validateDestination` | update your driver to v1 · WARN if a driver declares a door but not `set_door`, or if a scenario override names a bot you do not have |
 
 Paste the nine lines into any support request. `--json` prints the same report as JSON — it contains no secrets, so it is safe to attach.
 
@@ -85,12 +86,13 @@ Paste the nine lines into any support request. `--json` prints the same report a
 efk start [--scenario <name>] [--web] [--web-host <host>] [--headless] [--check] [--demo]
 ```
 
-- One MQTT connection per bot (client id `fleet-<ns>-<bot_id>-hb`), retained `state`, `event` unretained, `command` subscribed — exactly as the contract's *MQTT mode* section asks. Capabilities are not a topic: the kit sends the document to remi once at start-up (see below).
+- One MQTT connection per bot (client id `fleet-<ns>-<bot_id>-hb`), retained `state`, `event` unretained, `command` subscribed — exactly as the contract's *MQTT mode* section asks. Capabilities are not a topic: the kit sends the document to remi at start-up, and again only when the fleet changes it (see below).
 - The TUI shows **BOTS** (link, availability, battery, door, current command, age of last state, `seq`, dropped states), **COMMANDS** (newest first; resends of the same id are one row with `×N`; the *echo* column is the time from receiving a command to publishing the first state that carries it in `current_command`), **EVENTS** and **LOG**. `Tab`/`←`/`→` switch sections, `↑`/`↓` select a bot, `q` quits.
 - Manual fault keys on the selected bot (simulated driver only): `a` toggle `available`, `d` open/close the door locally (the human of `manual_close_door`), `o` cycle the link (scenario → pinned down → pinned up → back to the scenario; a `*` in the row means you are holding it), `b` blocked/unblocked.
 - `--web` serves the same four views at `http://127.0.0.1:4310` (SSE, no framework, no map), plus the same manual fault controls the TUI has — available/door/link/blocked — as four `POST /api/bots/:botId/controls/*` routes. This is a deliberate break of design §8 ("TUI, web and log are observers of the bus; no logic lives in them"): the TUI already broke it (manual fault keys), and the web now does too, on purpose, sharing the same extracted logic (`src/core/manual-controls.ts`) so the two interfaces cannot diverge. It binds to loopback by default; **the control routes are only *mounted* when the dashboard is bound to loopback** — on any other host they do not exist (a request 404s, it is not "present but refused") — because this repository is public, so the shape of every endpoint is public knowledge and a startup warning protects nothing. `--web-host 0.0.0.0` still exposes the read-only views and still warns, but now says plainly that state is visible to the network while the controls stay disabled.
 - `--headless` disables the TUI (Docker, CI) and every line the running fleet produces goes to stderr as JSON — one per event, not just the startup banner. The few sentences that *refuse* a start (an unparseable `.env`, a held lock, a port already taken) and the demo banner stay plain prose, because there is no fleet yet to report on.
 - A second `efk start` in the same directory refuses to run (`.efk.lock`): two instances would publish conflicting `seq`. **The design is single-instance**: one process per fleet. Two replicas behind a load balancer would each keep their own `seq` counters and command ledger, and remi would discard half the states as stale and see commands its sender never accepted. If you deploy it, deploy one replica with a strategy that stops the old one before starting the new (Kubernetes: `replicas: 1`, `strategy: Recreate`, and a `ReadWriteOncePod` volume — `ReadWriteOnce` limits by *node*, not by pod).
+- **An empty roster, or a driver that is not configured yet, is an idle start, not a refusal.** The fleet comes up with no bots, says once what is missing, and publishes nothing. A roster fills itself within 15 s of Robot.com registering the bots (see below); a driver that reports itself unconfigured (`DriverFactory.unavailable()`, typically your own API credentials) needs the `.env` fixed and a restart. That is the normal state of a fresh deployment: the bots are registered in remi on the day of the onboarding, and your credentials arrive when they arrive.
 
 What `efk start` actually does, in order — note that the roster comes from remi, not from your config:
 
@@ -111,10 +113,14 @@ sequenceDiagram
         K->>B: CONNECT as fleet-NS-BOT-hb
         K->>B: SUBSCRIBE fleet/NS/bot/BOT/command
     end
-    K->>R: POST /api/v3/fleet/capabilities (once, not retained anywhere)
+    K->>R: POST /api/v3/fleet/capabilities (skipped while idle: an empty document is worse than none)
     R-->>K: 200, or an error the kit logs and starts on anyway
     Note over K,D: from here a 250 ms tick asks every bot for a snapshot<br/>and publishes the ones the cadence says are due
 ```
+
+**The roster is not frozen at startup.** Every 15 s the kit reads `GET /api/v3/fleet` and `GET /api/v3/fleet/bots` again and follows what changed: a bot Robot.com registered starts being driven, a bot they retired stops, and a bot whose `fleet_serial` moved is rebuilt against the robot it now names. Only the bots that changed are touched — everything else keeps its runtime, its command ledger and its driver, so a fleet that is delivering does not notice. Two things it never does on a refresh: park a fleet that is already driving (an undriveable bot is skipped and logged, not a reason to take the others off the road), and rebuild a bot that is running a command (the change waits for the next pass). If remi is unreachable the pass is skipped and the current roster keeps driving. The capabilities document is re-sent only when it changed, and never from an idle fleet: a document that says `has_door: false` makes remi drop every `set_door` and turn `manual_close_door` on for every bot, one-way. What still needs a restart is the `.env`: credentials and transport are read once, by design.
+
+**`fleet_serial`.** remi may map a bot to the id your own system uses for that robot (`fleet_serial` on each roster row). The driver factory receives it as `env.fleetSerial`; `null` means the original rule, where your serial is the bot id minus the fleet prefix. When remi marks the fleet `requires_fleet_serial` — its bot ids are internal, so stripping the prefix would address the wrong robot — a bot with no mapping parks the whole fleet at start (idle, said once), rather than driving 49 robots of 50 and stranding the order that lands on the missing one. A refresh only skips it.
 
 ## The command round trip
 
@@ -244,7 +250,7 @@ Shipped scenarios: `default`, `boolean-door`, `low-battery`, `offline-flapping`,
 ## From simulator to your robots: implementing `RobotDriver`
 
 1. Copy `src/driver/template/my-robot-driver.ts` to `src/driver/my-robot-driver.ts` and replace each `TODO` with calls into your fleet API.
-2. In `efk.config.ts` replace `driver: simulated({ scenario: ... })` with `driver: (botId) => new MyRobotDriver(botId)`.
+2. In `efk.config.ts` replace `driver: simulated({ scenario: ... })` with `driver: (botId) => new MyRobotDriver(botId)`. The factory's second argument carries `fleetSerial` (see *`efk start`*), and the factory may have an `unavailable()` that answers a sentence while it cannot build drivers — missing API credentials — so the fleet starts idle instead of throwing once per robot.
 3. `pnpm efk check` (C9 validates your driver), then `pnpm efk start`.
 
 The contract of the interface (`src/driver/robot-driver.ts`, version 1):
@@ -289,7 +295,7 @@ If a log line or an event `detail` looks mangled, one of those three is why. The
 
 ## HTTP mode and the public URL
 
-Set `REMI_TRANSPORT=http`. The kit serves the four partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. `GET /healthz` is the one unauthenticated route (see [Running it in a container](#running-it-in-a-container)). Capabilities are not one of these: the kit sends that document to remi with `POST /api/v3/fleet/capabilities` once at start-up (see `efk start` above), not served or polled. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
+Set `REMI_TRANSPORT=http`. The kit serves the four partner endpoints (`GET /bots`, `POST /bots/:bot_id/commands`, `GET /bots/:bot_id/commands/:command_id`, `POST /destinations/validate`) on `0.0.0.0:HTTP_PORT` with your `HTTP_TOKEN`, answers 202 (never 200) and RFC 7807 errors. `GET /healthz` is the one unauthenticated route (see [Running it in a container](#running-it-in-a-container)). Capabilities are not one of these: the kit sends that document to remi with `POST /api/v3/fleet/capabilities` (see `efk start` above), not served or polled. **remi has to reach `HTTP_PUBLIC_URL` over `https`**: a laptop needs a tunnel or a deployment. C6 can only tell you that your server is up; it cannot prove remi reaches it, which is why it is a `WARN` even when green. `HTTP_PUSH=true` pushes state and events to remi instead of waiting to be polled.
 
 ```mermaid
 sequenceDiagram
@@ -319,7 +325,7 @@ There is no `.env` in the image. Every variable of [the `.env` you receive](#the
 
 The entrypoint removes a leftover `.efk.lock` before starting. Its owner-is-alive check cannot work across containers — pid 1 always exists in a fresh one — so a lock left by a killed predecessor would refuse every restart for ever. That is safe **only** with one replica and a strategy that stops the old container first (see *single-instance* under `efk start`); with two replicas the lock would be doing its job and deleting it would be the bug.
 
-`GET /healthz` (HTTP mode) is served **without** the bearer token, because a load balancer's health probe usually sends no headers; every other route still requires it. It answers `{"ok":true}` **unconditionally**: the process is listening, nothing more. It is not a deployment gate. Read the logs, or run `efk check`, to know whether the fleet is actually driving robots.
+`GET /healthz` (HTTP mode) is served **without** the bearer token, because a load balancer's health probe usually sends no headers; every other route still requires it. It answers `{"ok":true}` **unconditionally**: the process is listening, nothing more. It is not a deployment gate — an idle fleet with no credentials answers the same 200 as a working one. Read the logs, or run `efk check`, to know whether the fleet is actually driving robots.
 
 ## How the contract is kept in sync
 

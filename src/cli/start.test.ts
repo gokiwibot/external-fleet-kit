@@ -59,6 +59,7 @@ function fakeManager(overrides: Partial<FleetManager> = {}): FleetManager {
         start: async () => ({ ok: true, roster: ['ACME-0001'] }),
         stop: async () => {},
         bots: () => [],
+        reconcileOnce: async () => {},
         driver: () => undefined,
         config: () => null,
         capabilities: () => ({ supports_command_interrupt: true, default: { has_door: false, supported_commands: [] } }),
@@ -326,7 +327,9 @@ describe('efk start', () => {
 
     it('releases the lock and leaves no signal listener behind when the fleet refuses to start', async () => {
         const before = process.listenerCount('SIGINT')
-        const h = harness({}, { start: async () => ({ ok: false, reason: 'empty_roster', detail: 'no bots registered' }) })
+        // `remi_error` and not `empty_roster`: an empty roster is an idle START now, not a refusal,
+        // so it is no longer a way to make the fleet fail. Any surviving refusal reason does.
+        const h = harness({}, { start: async () => ({ ok: false, reason: 'remi_error', detail: 'no bots registered' }) })
         assert.equal(await startWith(options(), h.deps), 1)
         assert.ok(errored.join('\n').includes('no bots registered'))
         assert.equal(h.lockReleased(), 1)

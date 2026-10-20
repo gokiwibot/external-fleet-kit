@@ -6,6 +6,13 @@ import type { CommandOutcome } from '../core/events'
 export interface Transport {
     readonly kind: 'mqtt' | 'http'
     start(bots: BotRuntime[]): Promise<void>
+    /**
+     * The fleet changed while running: remi registered, retired or remapped a bot and the manager
+     * rebuilt only what changed (FleetManager, THE ROSTER IS RE-READ). A transport that keeps its
+     * own view of the fleet — the HTTP server answers `GET /bots` from it, MQTT holds one connection
+     * per bot — has to be told, or it keeps serving a fleet that no longer exists.
+     */
+    setBots(bots: BotRuntime[]): Promise<void>
     stop(): Promise<void>
     /**
      * True when the state really left the process. False is a legitimate answer, not an error: a bot

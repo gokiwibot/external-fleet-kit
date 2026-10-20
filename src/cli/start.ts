@@ -1,7 +1,12 @@
 /**
  * `efk start`: lock → env → config → remi → fleet manager → transport → TUI/web. Refuses to start on
- * a second instance, an unparseable .env, a transport mismatch or an empty roster, each with the
- * message the design lists (§9.6).
+ * a second instance, an unparseable .env or a transport mismatch, each with the message the design
+ * lists (§9.6).
+ *
+ * An EMPTY ROSTER is not among them any more. It used to be a refusal; it is now the idle state a
+ * pod legitimately starts in — deployed, registered with remi, and waiting for bots to be registered
+ * against the fleet. Refusing there meant the only way to verify a deployment was to already have
+ * everything the deployment was waiting for. `fleet-manager.start` says what is missing, once.
  *
  * There is exactly ONE way out (`shutdown`), used by SIGINT, SIGTERM and the TUI's `q`. An earlier
  * draft had the TUI raise a synthetic SIGINT to reuse the signal path; that is a process-wide side
@@ -32,7 +37,7 @@ import { createMqttTransport } from '../transport/mqtt'
 import { startTui } from '../tui'
 import { startWeb } from '../web'
 import { formatReport, runCheck } from './check'
-import { loadEnv } from './env'
+import { loadEnv, sandboxOrigin } from './env'
 import { acquireLock, processIsAlive } from './lock'
 import { httpProbe, mqttProbe, parityProbe } from './probes'
 
@@ -166,7 +171,7 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
             ? createFakeRemiClient({ transport: env.env.REMI_TRANSPORT })
             : createRemiClient({ baseUrl: env.env.REMI_API_URL, apiKey: env.env.REMI_API_KEY })
 
-        const origin = { lat: env.env.SANDBOX_CENTER_LAT, lng: env.env.SANDBOX_CENTER_LNG }
+        const origin = sandboxOrigin(env.env)
         /**
          * THE DISCARD HAS TO BE HEARD. `createStateStore` reports through `onDiscard` when
          * `.efk-state.json` is unreadable and the per-bot `seq` counters restart at 1 — and until
@@ -218,7 +223,10 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
                           serveFleet: () => manager.serve(),
                           remi,
                       }),
-            driverFor: (botId) => config.config.driver(botId, { origin }),
+            driverFor: (botId, fleetSerial) => config.config.driver(botId, { origin, fleetSerial }),
+            // Read through a closure, not captured now: the answer belongs to `start()`, and the
+            // factory is entitled to look at the environment when it is asked rather than at import.
+            driverUnavailable: () => config.config.driver.unavailable?.() ?? null,
             fleet: config.config.fleet,
             env: { transport: env.env.REMI_TRANSPORT },
             bus,

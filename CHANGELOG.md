@@ -11,7 +11,15 @@ Absorbed from the first fork of the kit that drives real robots. Only what any p
 - `EFK_STATE_DIR` moves `.efk.lock` and `.efk-state.json` onto a volume. Declared in the `.env` schema.
 - `GET /healthz` on the HTTP surface, before the bearer check, for probes that send no headers. It says the process is listening, nothing about the fleet.
 
+- **The roster is re-read every 15 s** (`ROSTER_REFRESH_MS`) instead of being frozen at `start()`. Only the bots that changed are rebuilt; a refresh never parks a fleet that is driving, never rebuilds a bot running a command, and skips its pass if remi is unreachable. `Transport.setBots` tells the HTTP surface and the MQTT connections about the change.
+- **`fleet_serial` and `requires_fleet_serial`** (remi's mapping from its bot id to the partner's own id). `DriverFactory` receives `env.fleetSerial`; `efk start` and `efk check` share one `selectRoster()` so the preflight judges the same bots the start drives. **Added to `src/contract/` by hand**, an exception to CONTRIBUTING: remi already serves both fields, the contract page does not document them yet, and the next `pnpm sync-samples` after it does replaces this.
+- **Idle start.** An empty roster, an unmapped bot on a fleet that requires `fleet_serial`, or a factory whose new optional `unavailable()` answers a sentence, bring the fleet up with no bots and say once why, instead of refusing to start or throwing once per robot.
+- `sandboxOrigin(env)` in `src/cli/env.ts`: the one place that turns `SANDBOX_CENTER_*` into a position, used by `efk start` and `efk check`. CONTRIBUTING now forbids reading configuration with `Number(process.env.…)`.
 - `DriverSnapshot.azimuth` and `DriverSnapshot.outOfService`, sent as the contract's optional `position.azimuth` and `out_of_service`. The vendored `botStateSchema` is strict, so until now a partner on the kit could not send either field even though the page documents both. The frozen samples are not re-synced here.
+
+### Changed
+- `SANDBOX_*` are optional; an empty value reads as absent, not as `0`. `efk order` refuses without `SANDBOX_LOCATION_ID`, the simulated driver throws without an origin, C3 compares locations only when a sandbox is set, and C9 skips while the driver is unavailable.
+- **An idle fleet no longer sends an empty capabilities document** (`has_door: false`, no commands). remi does not stop dispatching on it, but it drops every `set_door` and turns `manual_close_door` on for every bot, one-way: the flag stays after a good document arrives and is cleared by hand, bot by bot. An unchanged document is not re-sent either.
 
 ### Documentation
 - The kit is single-instance (`replicas: 1`, `Recreate`, `ReadWriteOncePod`), and the README now says so.

@@ -67,6 +67,7 @@ class PollingTransport implements Transport {
     readonly kind = 'http' as const
     handler: ((botId: string, command: BotCommand) => Promise<CommandOutcome>) | null = null
     async start() {}
+    async setBots() {}
     async stop() {}
     async publishState(_botId: string, _state: BotState) {
         return false
@@ -102,6 +103,7 @@ async function harness() {
         seq: createSeq(createStateStore(join(dir, '.efk-state.json'))),
         now: clock.now,
         tickMs: 0,
+        rosterRefreshMs: 0,
     })
     const started = await manager.start()
     assert.equal(started.ok, true)

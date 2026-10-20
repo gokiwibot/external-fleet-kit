@@ -217,6 +217,16 @@ export type DestinationValidation = z.output<typeof destinationValidationSchema>
 export const fleetConfigResponseSchema = z.looseObject({
     namespace: namespaceSchema,
     bot_id_prefix: z.string().min(1),
+    /**
+     * Whether this fleet's bot ids are INTERNAL ids rather than the fleet's own serials, so every
+     * bot must carry `fleet_serial`. Optional for an older remi that does not send it; absent is
+     * read as false, which is the original prefix-stripping behaviour.
+     *
+     * When true the prefix fallback is never right — `ACME-0173` with prefix `ACME-` strips to `0173`,
+     * a plausible serial that may not exist — so the manager parks the fleet instead of driving a
+     * robot chosen by accident.
+     */
+    requires_fleet_serial: z.boolean().optional(),
     transport: z.enum(['mqtt', 'http']),
     base_url: z.url().nullable(),
     token_set: z.boolean(),
@@ -256,6 +266,13 @@ export type BlockedBy = (typeof BLOCKED_BY)[number]
  */
 export const fleetBotMirrorSchema = z.looseObject({
     bot_id: botIdSchema,
+    /**
+     * The id this bot has in the FLEET's own system, when remi holds one. Optional so an older remi
+     * that does not send the field still parses; null means "derive it from `bot_id`", the original
+     * rule where the serial is the id minus the fleet prefix. No grammar: this string is the
+     * fleet's, not ours — it never becomes an MQTT topic level.
+     */
+    fleet_serial: z.string().nullable().optional(),
     location_id: z.string().nullable(),
     assignable: z.boolean(),
     blocked_by: z.array(z.string()),

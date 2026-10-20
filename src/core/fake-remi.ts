@@ -26,6 +26,7 @@ export function createFakeRemiClient(opts: { roster?: string[]; namespace?: stri
     }
     const mirror = (botId: string): FleetBotMirror => ({
         bot_id: botId,
+        fleet_serial: null,
         location_id: 'DEMO-LOCATION',
         assignable: false,
         blocked_by: ['disconnected'],

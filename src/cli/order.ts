@@ -17,11 +17,25 @@
 import type { Delivery, RemiClient, Result } from '../remi/client'
 import type { Env } from './env'
 
+/**
+ * `SANDBOX_LOCATION_ID` is optional in the schema — a production fleet has no sandbox — so this is
+ * the one command that cannot run without it. Refused here with the variable's name, rather than
+ * sending `location_id: undefined` and letting remi answer with a validation error about a field the
+ * partner never typed.
+ */
 export function createOrder(remi: RemiClient, env: Env, name: string, now: () => number = Date.now): Promise<Result<Delivery>> {
+    const locationId = env.SANDBOX_LOCATION_ID
+    if (locationId === undefined)
+        return Promise.resolve({
+            ok: false,
+            status: 0,
+            code: 'SANDBOX_NOT_CONFIGURED',
+            message: 'SANDBOX_LOCATION_ID is not set in your .env; `efk order` creates deliveries on the sandbox and needs it',
+        })
     return remi.createDelivery({
         name,
         external_id: `efk-${now()}`,
-        location_id: env.SANDBOX_LOCATION_ID,
+        location_id: locationId,
         pickup: { external_id: env.SANDBOX_PICKUP_EXTERNAL_ID },
         dropoff: { external_id: env.SANDBOX_DROPOFF_EXTERNAL_ID },
         packages: [{ reference: 'efk-1', items: [{ name: 'efk test package', quantity: 1 }] }],

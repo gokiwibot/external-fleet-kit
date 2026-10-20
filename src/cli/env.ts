@@ -8,6 +8,8 @@ import { z } from 'zod'
 
 const bool = z.preprocess((v) => (typeof v === 'string' ? v.toLowerCase() === 'true' : v), z.boolean())
 const port = z.coerce.number().int().min(1).max(65535)
+/** An empty value means ABSENT, never zero or the empty string. See the SANDBOX_* block below. */
+const blank = (v: unknown) => (v === '' ? undefined : v)
 
 export const envSchema = z
     .object({
@@ -29,9 +31,18 @@ export const envSchema = z
         HTTP_PORT: port.default(4300),
         HTTP_PUBLIC_URL: z.url().optional(),
         HTTP_PUSH: bool.default(false),
-        SANDBOX_LOCATION_ID: z.string().min(1),
-        SANDBOX_CENTER_LAT: z.coerce.number().min(-90).max(90),
-        SANDBOX_CENTER_LNG: z.coerce.number().min(-180).max(180),
+        /**
+         * OPTIONAL: they describe a test sandbox — `efk order` creates deliveries on it and the
+         * simulated driver spawns bots at its centre — and a real fleet talking to a real partner
+         * needs none of the three. Absent is the idle state a fresh pod starts in, not an error.
+         *
+         * `blank` is not cosmetic. Without it `SANDBOX_CENTER_LAT=` (present, empty — exactly what a
+         * half-filled manifest produces) coerces to `Number('') === 0`, a perfectly valid latitude
+         * off the coast of Africa, and the fleet would silently be placed there. Empty means absent.
+         */
+        SANDBOX_LOCATION_ID: z.preprocess(blank, z.string().min(1).optional()),
+        SANDBOX_CENTER_LAT: z.preprocess(blank, z.coerce.number().min(-90).max(90).optional()),
+        SANDBOX_CENTER_LNG: z.preprocess(blank, z.coerce.number().min(-180).max(180).optional()),
         SANDBOX_PICKUP_EXTERNAL_ID: z.string().min(1).default('efk-sandbox-pickup'),
         SANDBOX_DROPOFF_EXTERNAL_ID: z.string().min(1).default('efk-sandbox-dropoff'),
         WEB_PORT: port.default(4310),
@@ -62,6 +73,18 @@ export const envSchema = z
         }
     })
 export type Env = z.output<typeof envSchema>
+
+/**
+ * The fleet's home point, or undefined when the sandbox is not configured. THE one place that turns
+ * SANDBOX_CENTER_* into a position, so `efk start` and `efk check` build drivers from the same origin.
+ * `!== undefined` and NOT a truthiness check: latitude 0 and longitude 0 are real coordinates. The
+ * schema already turns an empty value into `undefined`, so the two are either both real or absent.
+ */
+export function sandboxOrigin(env: Pick<Env, 'SANDBOX_CENTER_LAT' | 'SANDBOX_CENTER_LNG'>): { lat: number; lng: number } | undefined {
+    return env.SANDBOX_CENTER_LAT !== undefined && env.SANDBOX_CENTER_LNG !== undefined
+        ? { lat: env.SANDBOX_CENTER_LAT, lng: env.SANDBOX_CENTER_LNG }
+        : undefined
+}
 
 /** Reads `.env` (if present) under process.env, so an exported variable wins over the file. */
 export function readEnvFile(path = '.env'): Record<string, string> {

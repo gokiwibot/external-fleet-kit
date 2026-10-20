@@ -129,7 +129,11 @@ export async function defaultValidateDestination(position: Position): Promise<De
 /**
  * What `efk.config.ts` assigns to `driver`: builds one `RobotDriver` per bot id the kit discovered
  * on the roster. `env.origin` is the fleet's home point (from `SANDBOX_CENTER_LAT`/`SANDBOX_CENTER_LNG`)
- * — the simulated driver spawns new bots there; a real driver may ignore it.
+ * — the simulated driver spawns new bots there; a real driver ignores it.
+ *
+ * OPTIONAL, because those two variables are: a real fleet has no sandbox and a pod can start before
+ * anyone has filled them in. A driver that genuinely needs an origin says so when it is built — see
+ * `simulated()` — rather than the kit refusing to start for a driver that never reads it.
  *
  * Declared here, and only here (controller ruling R12): the simulated driver and the CLI config
  * loader both need it, the simulated driver's own module runs before the config loader exists, and
@@ -148,6 +152,27 @@ export async function defaultValidateDestination(position: Position): Promise<De
  * neither: `connected` is contract-required on every snapshot, so it reads the snapshot, not
  * `wantsConnection()`.
  */
-export type DriverFactory<D extends RobotDriver = RobotDriver> = ((botId: string, env: { origin: Position }) => D) & {
+export type DriverFactory<D extends RobotDriver = RobotDriver> = ((
+    botId: string,
+    /** `fleetSerial` is remi's mapping for this bot, when it has one: the id the FLEET uses for it. */
+    env: { origin?: Position; fleetSerial?: string | null },
+) => D) & {
     auditRoster?: (roster: string[]) => string[]
+    /**
+     * Optional, and ASKED BEFORE ANY BOT IS BUILT: is this factory able to build drivers at all right
+     * now? A sentence explaining what is missing puts the whole fleet in the idle state; `null` (or
+     * no such function) means go ahead.
+     *
+     * It exists because "not configured yet" is a legitimate state of a deployed fleet manager, not an
+     * error, and the kit cannot recognise it on its own — whatever a driver needs beyond the kit's
+     * own `.env` is the driver's private business (typically your own fleet API credentials). The
+     * alternative is what this replaced: the factory throwing out of `driverFor`, which the kit can
+     * only read as a broken driver.
+     *
+     * Report it here rather than throwing per bot. A partner's fleet exists in remi from the moment
+     * someone registers the bots, which is normally well before the partner's own API credentials
+     * arrive; between those two moments the roster is full, the credentials are absent, and the
+     * honest answer is "up, and doing nothing yet" rather than one exception per robot.
+     */
+    unavailable?: () => string | null
 }

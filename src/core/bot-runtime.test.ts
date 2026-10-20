@@ -240,6 +240,22 @@ describe('bot runtime — state assembly and cadence', () => {
         assert.equal(result.state.current_command?.id, 'J/pickup')
         assert.equal(result.state.door, 'closed')
     })
+    it('carries out_of_service only when the driver reports it', () => {
+        const { clock, driver, runtime } = harness()
+        const silent = runtime.assemble(clock.nowMs)
+        assert.equal(silent.ok && 'out_of_service' in silent.state, false, 'a driver that cannot tell leaves the field out')
+        driver.snap = { ...driver.snap, available: false, outOfService: true }
+        const parked = runtime.assemble(clock.nowMs)
+        assert.equal(parked.ok && parked.state.out_of_service, true)
+    })
+    it('carries position.azimuth only when the driver reports it', () => {
+        const { clock, driver, runtime } = harness()
+        const silent = runtime.assemble(clock.nowMs)
+        assert.equal(silent.ok && 'azimuth' in silent.state.position, false)
+        driver.snap = { ...driver.snap, azimuth: 90.3 }
+        const facing = runtime.assemble(clock.nowMs)
+        assert.equal(facing.ok && facing.state.position.azimuth, 90.3)
+    })
     it('two consecutive polls never claim the same seq, because they carry none', () => {
         const { clock, runtime } = harness()
         const first = runtime.assemble(clock.nowMs)

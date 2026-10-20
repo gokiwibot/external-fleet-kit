@@ -36,6 +36,15 @@ export const botPositionSchema = z.strictObject({
 })
 export type BotPosition = z.output<typeof botPositionSchema>
 
+/**
+ * `BotState.position` only: a position that may also say where the bot is facing. `azimuth` is a
+ * COMPASS bearing, degrees from true North, clockwise (0 = North, 90 = East), nominally [0, 360).
+ * Optional; any finite number is accepted, because remi normalises it rather than rejecting the
+ * state. A destination (`corrected_position`, `navigate_to`) has no orientation, so those keep the
+ * strict two-field `botPositionSchema`. Mirrors the page's `BotPosition`.
+ */
+export const botStatePositionSchema = botPositionSchema.extend({ azimuth: z.number().optional() })
+
 export const botBatterySchema = z.strictObject({ percentage: z.number().int().min(0).max(100) })
 
 export const doorStateSchema = z.enum(['opened', 'closed', 'opening', 'closing', 'stalled', 'unknown', 'unsupported'])
@@ -110,8 +119,15 @@ export const botStateSchema = z.strictObject({
     seq: z.number().int().min(0).optional(),
     timestamp: isoTimestamp,
     available: z.boolean(),
+    /**
+     * Optional: the fleet has taken this robot out of service. Absent = not reported = `false` for remi.
+     * On `true` remi parks the bot `off_duty` (operator status) unless it is on a job or an operator
+     * already set another status; it is one-way — remi never un-parks it when this goes back to `false`,
+     * a remi operator does. Mirrors the page's `BotState.out_of_service`.
+     */
+    out_of_service: z.boolean().optional(),
     connected: z.boolean(),
-    position: botPositionSchema,
+    position: botStatePositionSchema,
     battery: botBatterySchema,
     motion: z.strictObject({ speed_mps: z.number().min(0) }).optional(),
     door: doorStateSchema,

@@ -7,7 +7,18 @@
  *  - After you return `accepted`, emit `commandState(id, 'executing')` when the robot starts, and
  *    `arrived(id)` (navigation) or `commandState(id, 'succeeded' | 'failed')` when it finishes.
  *  - Never emit for an id you did not accept. The kit ignores it and logs a warning.
- *  - If you return `rejected`, use one of the four contract codes; anything else must be a throw.
+ *  - `rejected` takes one of the four contract codes. Throw ONLY what resending the same command can
+ *    fix (your API said "busy, retry", a timeout, your own bug): remi resends up to 3 times. A
+ *    deterministic failure (robot not found, key reused, action not supported) thrown instead burns
+ *    those three sends on the same answer and the delivery dies with no outcome — reject it,
+ *    `UNSUPPORTED_COMMAND` when nothing else fits, with your API's error in the message.
+ *  - The kit's idempotency is uniform; your API's may not be. Check it per endpoint: it is common
+ *    for "create mission" to replay a repeated key while "cancel" or "open lid" act again on it.
+ *  - Do not take an action's success from its HTTP 2xx when the robot never confirms it (a lid that
+ *    reports nothing back): read the result from telemetry before reporting `succeeded`.
+ *  - Log the id YOUR API gives the mission next to remi's command id when you create it. When an
+ *    outcome looks wrong ("succeeded" far from the destination), that id is the only thing your own
+ *    support can look up.
  */
 import type { DestinationValidation } from '../../contract/schemas'
 import {
@@ -38,7 +49,9 @@ export class MyRobotDriver implements RobotDriver {
     }
 
     snapshot(): DriverSnapshot {
-        // TODO: read from your latest telemetry. Return position: null if you do not know where the robot is.
+        // TODO: read from your latest telemetry. Return position: null if you do not know where the robot is,
+        // and do not repeat an old fix as if it were current (see DriverSnapshot.position).
+        // `available` is your API's own "can take work", nothing added to it.
         return { position: null, batteryPercentage: 100, door: 'unsupported', available: false, connected: false }
     }
 
@@ -75,6 +88,7 @@ export class MyRobotDriver implements RobotDriver {
     validateDestination(position: Position): Promise<DestinationValidation> {
         // Keep the default if your robots do not correct destinations; otherwise apply the same
         // correction navigateTo applies, and make sure the same coordinate always gets the same answer.
+        // remi does not call this in the current release (see RobotDriver.validateDestination).
         return defaultValidateDestination(position)
     }
 

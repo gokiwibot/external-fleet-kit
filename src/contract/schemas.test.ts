@@ -16,7 +16,30 @@ const base = {
 describe('botStateSchema', () => {
     it('accepts a complete state and rejects an unknown key (strict)', () => {
         assert.equal(botStateSchema.safeParse(base).success, true)
-        assert.equal(botStateSchema.safeParse({ ...base, heading: 90 }).success, false, 'heading is not in the contract')
+        assert.equal(
+            botStateSchema.safeParse({ ...base, heading: 90 }).success,
+            false,
+            'orientation lives in position.azimuth, not at the top',
+        )
+    })
+    it('position.azimuth is optional, any finite number, and only on BotState.position', () => {
+        const at = (position: unknown) => botStateSchema.safeParse({ ...base, position }).success
+        assert.equal(at({ lat: 33.9701, lng: -118.4148, azimuth: 90.3 }), true)
+        assert.equal(at({ lat: 33.9701, lng: -118.4148, azimuth: -90 }), true, 'remi normalises, it does not reject')
+        assert.equal(at({ lat: 33.9701, lng: -118.4148, azimuth: '90' }), false)
+        assert.equal(at({ lat: 33.9701, lng: -118.4148, heading: 90 }), false, 'position stays strict')
+        const corrected = { id: 'J/p', state: 'accepted', accepted_at: '2026-09-01T14:22:31.220Z', correction_distance_m: 1 }
+        assert.equal(commandStatusSchema.safeParse({ ...corrected, corrected_position: { lat: 0, lng: 0 } }).success, true)
+        assert.equal(
+            commandStatusSchema.safeParse({ ...corrected, corrected_position: { lat: 0, lng: 0, azimuth: 0 } }).success,
+            false,
+            'a destination has no orientation',
+        )
+    })
+    it('out_of_service is an optional boolean', () => {
+        assert.equal(botStateSchema.safeParse({ ...base, out_of_service: true }).success, true)
+        assert.equal(botStateSchema.safeParse({ ...base, out_of_service: 'yes' }).success, false)
+        assert.equal(botStateSchema.safeParse({ ...base, out_of_service: null }).success, false, 'omit it, never null')
     })
     it('requires every required field', () => {
         const { position: _position, ...noPosition } = base

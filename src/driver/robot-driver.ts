@@ -17,16 +17,38 @@ export type Position = Readonly<{ lat: number; lng: number }>
 
 /** What the driver knows about its robot right now. The kit reads it on every tick and on every change. */
 export interface DriverSnapshot {
-    /** null = the robot does not know where it is; the kit publishes no state without a position. */
+    /**
+     * null = the robot does not know where it is; the kit publishes no state without a position.
+     *
+     * Every state goes out stamped with the kit's clock, so whatever you return here reads as CURRENT to
+     * remi. Holding on to the last fix through a short gap in your telemetry is fine; repeating it for
+     * ever is not — a robot that stopped reporting would stay "connected, right here" on remi's map.
+     * Past a bound you choose, return null (remi's liveness then takes the bot offline) or
+     * `connected: false`.
+     */
     position: Position | null
+    /**
+     * Where the robot is facing: compass bearing, degrees from true North, clockwise (0 = North,
+     * 90 = East). Optional: a driver that cannot tell omits it, and the kit omits `position.azimuth`.
+     */
+    azimuth?: number
     /** 0-100. The kit rounds to an integer. */
     batteryPercentage: number
     /** Optional in the contract; omit if unknown. */
     speedMps?: number
     /** Only `opened` and `closed` are mandatory for a driver with a door; `unsupported` if there is no door. */
     door: DoorState
-    /** "Can take work": the partner's throttle. */
+    /**
+     * "Can take work": your API's own verdict, one to one. Do not fold connectivity into it (that is
+     * `connected`) nor the age of your reading (remi derives it from the state's timestamp): a third
+     * opinion only creates disagreement about which one is right.
+     */
     available: boolean
+    /**
+     * The fleet has taken the robot out of service (not a transient reason like an open lid). Optional:
+     * a driver that cannot tell omits it, and the kit omits `out_of_service` from the state.
+     */
+    outOfService?: boolean
     /** "I have a link to the robot". The broker outranks it in MQTT mode, but the field is required. */
     connected: boolean
 }
@@ -35,6 +57,14 @@ export interface DriverSnapshot {
  * Synchronous answer to a command. `accepted*` obliges the driver to emit `commandState` later.
  * A THROW is not a DriverAccept: the kit catches it and treats it as DRIVER_ERROR (503 in HTTP;
  * in MQTT current_command is left untouched so remi resends).
+ *
+ * THROW ONLY WHAT A RESEND CAN FIX. remi resends the same command id up to 3 times, so a throw is a
+ * request to be asked again: right for a transient refusal of your API ("busy, retry", a request
+ * with that key still in progress, a timeout) and for your own bugs. A failure that is
+ * deterministic for that command — robot not found, idempotency key reused, action not supported —
+ * gets the same answer three times and the delivery dies with no terminal `current_command`. Return
+ * `rejected` for those instead (`UNSUPPORTED_COMMAND` when no other code fits), with your API's
+ * error in `message` so the cause is not lost.
  */
 export type DriverAccept =
     | { kind: 'accepted' }
@@ -80,6 +110,10 @@ export interface RobotDriver {
      * POST /destinations/validate of the contract (required in HTTP mode). Read-only and idempotent:
      * the same coordinate must return the same answer. Use `defaultValidateDestination` if your
      * robots do not correct destinations.
+     *
+     * remi does not call this endpoint in the current release: the point registry that used it was
+     * retired. It stays part of the contract and of this interface, so keep the default unless your
+     * robots really correct destinations; nothing in remi depends on it today.
      */
     validateDestination(position: Position): Promise<DestinationValidation>
 

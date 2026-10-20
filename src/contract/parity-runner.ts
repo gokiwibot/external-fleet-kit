@@ -17,6 +17,7 @@ import {
     botEventSchema,
     botIdSchema,
     botPositionSchema,
+    botStatePositionSchema,
     botStateSchema,
     commandStatusSchema,
     destinationValidationSchema,
@@ -91,7 +92,8 @@ export const expectations: Record<string, z.ZodType> = {
     'fleet-patch-capabilities__request': fleetPatchCapabilitiesRequest,
     'fleet-patch-capabilities__response-200': envelope(fleetCapabilitiesSchema),
     'type-bot-state__botstate': botStateSchema,
-    'type-bot-position__botposition': botPositionSchema,
+    // The page's BotPosition type documents `azimuth`, which only `BotState.position` carries.
+    'type-bot-position__botposition': botStatePositionSchema,
     'type-bot-battery__botbattery': botBatterySchema,
     'type-bot-command__botcommand-navigate-to': botCommandSchema,
     'type-command-status__commandstatus': commandStatusSchema,

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Absorbed from the first fork of the kit that drives real robots. Only what any partner needs; that fork's own driver stays in the fork.
 
+### Changed
+- Samples re-frozen from the contract page at kiwi-platforms `54df6f670` (`data.ts` sha256 `3dea23d7…`), the commit that also records that hash in `KIT_SYNC.json`. They bring `fleet_serial` and `console_url` on the bot samples, the real command id shapes (`door/open/<ms>`, `cancel/<ms>`), `azimuth` on the position sample, and the video endpoint's response. The parity schemas accept `fleet_serial` and `console_url` on a registered bot and know the new sample.
+
 ### Added
 - `Dockerfile`, `docker/entrypoint.sh` and `.dockerignore`; README section *Running it in a container*.
 - `EFK_STATE_DIR` moves `.efk.lock` and `.efk-state.json` onto a volume. Declared in the `.env` schema.

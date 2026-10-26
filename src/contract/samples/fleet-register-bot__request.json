@@ -1,7 +1,9 @@
 {
   "bot_id": "ACME-0142",
+  "fleet_serial": "AC7F3K2",
   "manual_close_door": true,
   "commercial_name": "Acme 0142",
+  "console_url": "https://console.acme.example/robots/0142",
   "tags": [
     "acme-fleet",
     "lockable-door"

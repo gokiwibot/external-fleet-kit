@@ -44,7 +44,9 @@ const fleetUpdateConfigRequest = z.strictObject({
 })
 const fleetRegisterBotRequest = z.strictObject({
     bot_id: botIdSchema,
+    fleet_serial: z.string().min(1).optional(),
     manual_close_door: z.boolean().optional(),
+    console_url: z.string().min(1).optional(),
     commercial_name: z.string().optional(),
     tags: z.array(z.string()).optional(),
 })
@@ -54,6 +56,8 @@ const fleetUpdateBotRequest = z.strictObject({
     tags: z.array(z.string()).optional(),
 })
 const fleetRetireResponse = z.strictObject({ bot_id: botIdSchema, retired_at: z.iso.datetime({ offset: true }) })
+// `POST /api/v3/bots/:id/video`: the kit never calls it, but every sample on the page must parse.
+const watchBotResponse = z.looseObject({ url: z.string().min(1), expires_at: z.iso.datetime({ offset: true }), live: z.boolean() })
 const pushStateResponse = z.strictObject({ accepted: z.number().int(), rejected: z.number().int() })
 const reportEventResponse = z.strictObject({ accepted: z.literal(true) })
 const fleetPushStateRequest = z.strictObject({ bots: z.array(botStateSchema) })
@@ -82,6 +86,7 @@ export const expectations: Record<string, z.ZodType> = {
     'fleet-get-config__response-200': envelope(fleetConfigResponseSchema),
     'fleet-update-config__response-200': envelope(fleetConfigResponseSchema),
     'fleet-update-bot__response-200': envelope(fleetBotResponseSchema),
+    'fleet-watch-bot__response-200': envelope(watchBotResponse),
     'fleet-push-state__request': fleetPushStateRequest,
     'fleet-push-state__response-202': envelope(pushStateResponse),
     'fleet-report-event__request-arrived': botEventSchema,

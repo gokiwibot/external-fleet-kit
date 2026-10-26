@@ -1,7 +1,7 @@
 {
-  "commit": "5302257b2",
-  "sha256": "9b5957a70dce4a95fa2c57d7a067a2e80ffe726397753294715b48590c669eff",
-  "extractedAt": "2026-09-15T08:01:41.740Z",
+  "commit": "54df6f670",
+  "sha256": "3dea23d77828b053c6fe4667cc623ec6f1e1c22c25242069280eb9cf52a43edf",
+  "extractedAt": "2026-10-26T02:19:06.595Z",
   "files": [
     "fleet-get-config__response-200",
     "fleet-list-bots__response-200",
@@ -21,6 +21,7 @@
     "fleet-update-bot__response-200",
     "fleet-update-config__request",
     "fleet-update-config__response-200",
+    "fleet-watch-bot__response-200",
     "partner-create-command__botstate-current-command-rejected-mqtt-mode",
     "partner-create-command__request-cancel-navigation",
     "partner-create-command__request-navigate-to",

@@ -2,6 +2,7 @@
   "data": {
     "namespace": "acme",
     "bot_id_prefix": "ACME-",
+    "requires_fleet_serial": false,
     "transport": "http",
     "base_url": "https://fleet.acme-robotics.com/v1",
     "token_set": true,

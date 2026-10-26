@@ -3,10 +3,12 @@
   "seq": 88214,
   "timestamp": "2026-09-01T14:22:31.000Z",
   "available": false,
+  "out_of_service": false,
   "connected": true,
   "position": {
     "lat": 33.9701,
-    "lng": -118.4148
+    "lng": -118.4148,
+    "azimuth": 90.3
   },
   "battery": {
     "percentage": 74

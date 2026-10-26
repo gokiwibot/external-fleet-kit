@@ -1,5 +1,5 @@
 {
-  "id": "GW-5867/pickup/door-open",
+  "id": "door/open/1788272642000",
   "type": "set_door",
   "params": {
     "state": "open"

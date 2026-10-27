@@ -286,6 +286,16 @@ describe('efk check', () => {
         assert.equal(rule(thrown, 'C9')?.status, 'FAIL')
         assert.match(rule(thrown, 'C9')?.message ?? '', /cannot reach the fleet API/)
     })
+    it('C9 FAILs on a driver without navigate_to or cancel_navigation, which remi requires', async () => {
+        const driver = (botId: string) => {
+            const d = new FakeDriver(botId)
+            d.caps = { has_door: true, supported_commands: ['navigate_to', 'set_door'] }
+            return d
+        }
+        const report = await runCheck(deps({ config: { driver, fleet: { supportsCommandInterrupt: true } } }))
+        assert.equal(rule(report, 'C9')?.status, 'FAIL')
+        assert.match(rule(report, 'C9')?.message ?? '', /lacks cancel_navigation, which remi requires/)
+    })
     it('C9 WARNs about scenario overrides that name a bot the roster does not have', async () => {
         const driver = Object.assign((botId: string) => new FakeDriver(botId), { auditRoster: () => ['ACME-0009'] })
         const report = await runCheck(deps({ config: { driver, fleet: { supportsCommandInterrupt: true } } }))
@@ -427,6 +437,16 @@ describe('efk check', () => {
             {
                 config: badDriver(() => {
                     throw new Error('cannot reach the fleet API')
+                }),
+            },
+        ],
+        [
+            'C9 driver without a required command',
+            {
+                config: badDriver((botId) => {
+                    const d = new FakeDriver(botId)
+                    d.caps = { has_door: false, supported_commands: ['navigate_to'] }
+                    return d
                 }),
             },
         ],

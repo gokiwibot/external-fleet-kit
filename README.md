@@ -711,7 +711,7 @@ Nine rules, each `PASS`, `WARN`, `FAIL` or `SKIP`, each with a plain-language fi
 | C6 | HTTP mode: `GET HTTP_PUBLIC_URL/bots` with your token returns every bot | always at most WARN: this proves your server is up, **not** that remi can reach it |
 | C7 | the key has the `delivery` scope (`GET /api/v3/delivery/?limit=1`) | WARN: you can simulate but `efk order` will not work; ask Robot.com |
 | C8 | the frozen samples still validate against the vendored schemas | the kit itself is inconsistent; open an issue |
-| C9 | `efk.config.ts` loads; a driver is built **for every bot in your roster**, with the same `fleetSerial` `efk start` passes (never started; SKIP while the factory's `unavailable()` says it cannot build yet) and each is `driverVersion: 1`, declares capabilities and `validateDestination` | update your driver to v1 · WARN if a driver declares a door but not `set_door`, or if a scenario override names a bot you do not have |
+| C9 | `efk.config.ts` loads; a driver is built **for every bot in your roster**, with the same `fleetSerial` `efk start` passes (never started; SKIP while the factory's `unavailable()` says it cannot build yet) and each is `driverVersion: 1`, declares capabilities with `navigate_to` and `cancel_navigation` (remi requires both), and `validateDestination` | update your driver to v1; add the missing commands to `supportedCommands` · WARN if a driver declares a door but not `set_door`, or if a scenario override names a bot you do not have |
 
 Paste the nine lines into any support request. `--json` prints the same report as JSON — it contains no secrets, so it is safe to attach.
 

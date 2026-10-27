@@ -496,6 +496,14 @@ export async function runCheck(deps: CheckDeps): Promise<CheckReport> {
                     continue
                 }
                 const caps = driver.capabilities()
+                const missing = (['navigate_to', 'cancel_navigation'] as const).filter((c) => !caps.supportedCommands.includes(c))
+                if (missing.length > 0) {
+                    c9Fails.push({
+                        text: `${botId}: supportedCommands lacks ${missing.join(' and ')}, which remi requires: the bot cannot take a delivery, and remi rejects a capabilities document whose default lacks them (400 CAPABILITIES_MISSING_REQUIRED_COMMANDS) —`,
+                        remedy: "add navigate_to and cancel_navigation to the driver's supportedCommands",
+                    })
+                    continue
+                }
                 if (caps.hasDoor && !caps.supportedCommands.includes('set_door')) {
                     c9Warns.push({
                         text: `${botId}: declares a door but not set_door — remi will send set_door and you will reject it;`,

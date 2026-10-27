@@ -121,9 +121,10 @@ export const botStateSchema = z.strictObject({
     available: z.boolean(),
     /**
      * Optional: the fleet has taken this robot out of service. Absent = not reported = `false` for remi.
-     * On `true` remi parks the bot `off_duty` (operator status) unless it is on a job or an operator
-     * already set another status; it is one-way — remi never un-parks it when this goes back to `false`,
-     * a remi operator does. Mirrors the page's `BotState.out_of_service`.
+     * It does not make the bot unavailable on its own (`available` reports every other condition): remi
+     * keeps assigning it, alerts its operators while it carries a job, and clears the alert when this goes
+     * back to `false`. remi never changes the operator's status for it. Mirrors the page's
+     * `BotState.out_of_service`.
      */
     out_of_service: z.boolean().optional(),
     connected: z.boolean(),

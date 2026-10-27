@@ -1,7 +1,7 @@
 {
-  "commit": "54df6f670",
-  "sha256": "3dea23d77828b053c6fe4667cc623ec6f1e1c22c25242069280eb9cf52a43edf",
-  "extractedAt": "2026-10-26T02:19:06.595Z",
+  "commit": "fad916c76",
+  "sha256": "8fb07c86e2229701fe4a4090190ef0c6b2b3e6c9c541d968c6f1670d37b32041",
+  "extractedAt": "2026-10-27T19:45:37.158Z",
   "files": [
     "fleet-get-config__response-200",
     "fleet-list-bots__response-200",

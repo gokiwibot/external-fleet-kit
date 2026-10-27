@@ -1,6 +1,6 @@
 {
     "name": "external-fleet-kit",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Reference fleet manager and simulator for remi's External Fleets contract (efk)",
     "license": "Apache-2.0",
     "repository": { "type": "git", "url": "https://github.com/gokiwibot/external-fleet-kit" },

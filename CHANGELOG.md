@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-27
+
+Contract `2026-09`, samples re-frozen from kiwi-platforms `fad916c76` (`data.ts` sha256 `8fb07c86…`). The samples themselves are unchanged; only `SOURCE.json` moves. This version prepares the repository to be public.
+
 ### Changed
 - `efk check` C9 fails a driver whose `supportedCommands` lacks `navigate_to` or `cancel_navigation`. remi requires both and rejects a capabilities document whose default lacks them (`400 CAPABILITIES_MISSING_REQUIRED_COMMANDS`); until now the preflight passed such a fleet and `efk start` only logged the refusal.
 - The opt-in MQTT wire test accepts only a broker on this machine (`localhost`, `127.0.0.1`, `[::1]`), off port 1883. It used to refuse one production host by name.
@@ -12,6 +16,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Documentation
 - `out_of_service` does not make a bot unavailable: remi keeps assigning it, alerts its operators while it carries a job, and clears the alert when the field goes back to `false`. The README and the `botState` schema still described the old behaviour (parked `off_duty`, one-way).
 - Comments say what the code does, without references to internal planning documents.
+- The README no longer says the contract page denies `supports_command_interrupt: false`: the page documents the cancel-first branch.
 - The README no longer says an empty capabilities document turns `manual_close_door` on: remi refuses an empty one with 400. The harm comes from a document that lists the required commands and says `has_door: false` because no bot was connected, which the kit still never sends. The README and the `Dockerfile` no longer say a lost `seq` counter makes remi discard states: remi orders them by `timestamp` first.
 - `SECURITY.md` (private vulnerability reporting), issue forms that point contract questions and integration support at the docs and the onboarding contact, `CODEOWNERS`, and a README section on versioning and support.
 

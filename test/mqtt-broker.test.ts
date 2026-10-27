@@ -14,8 +14,9 @@
  * does not need a wire is covered by the broker double in `mqtt-transport.test.ts`.
  *
  * NEVER point `EFK_MQTT_URL` at port 1883 on a developer machine (a RabbitMQ with no MQTT 5 shared
- * subscriptions: the run hangs for minutes and looks exactly like a code failure) and never at
- * `mqtt.kiwibot.com`, which is production. The test refuses both rather than trusting the operator.
+ * subscriptions: the run hangs for minutes and looks exactly like a code failure) and never at a remote
+ * broker: the one remi gives you at onboarding is production. The test accepts only a broker on this
+ * machine, off port 1883, rather than trusting the operator.
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
@@ -53,10 +54,16 @@ function brokerPort(parsed: globalThis.URL): string {
     return fallback
 }
 
+/** This machine only. An allow-list, not a deny-list: any broker you were given is somebody's production. */
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]'])
+
 function assertSafeBroker(url: string) {
     const parsed = new globalThis.URL(url)
-    // Production first: it is the graver mistake, and it deserves to be named whatever port it is on.
-    assert.ok(!/kiwibot\.com$/i.test(parsed.hostname), `refusing ${parsed.hostname}: that is production, not a test broker`)
+    // Remote first: it is the graver mistake, and it deserves to be named whatever port it is on.
+    assert.ok(
+        LOCAL_HOSTS.has(parsed.hostname),
+        `refusing ${parsed.hostname}: not a broker on this machine, and a remote one may be production`,
+    )
     assert.notEqual(
         brokerPort(parsed),
         '1883',
@@ -122,16 +129,17 @@ describe('EFK_MQTT_URL guard', () => {
         assert.equal(brokerPort(new globalThis.URL('mqtt://127.0.0.1')), '1883', 'an empty port is not "no port": mqtt.js dials 1883')
     })
 
-    it('refuses production, and an unknown scheme whose port cannot be known', () => {
-        assert.throws(() => assertSafeBroker('mqtts://mqtt.kiwibot.com:8883'), /that is production/)
-        assert.throws(() => assertSafeBroker('mqtt://mqtt.kiwibot.com'), /that is production/)
+    it('refuses any broker off this machine, and an unknown scheme whose port cannot be known', () => {
+        assert.throws(() => assertSafeBroker('mqtts://broker.example.com:8883'), /not a broker on this machine/)
+        assert.throws(() => assertSafeBroker('wss://broker.example.com'), /not a broker on this machine/)
         assert.throws(() => assertSafeBroker('tcp://127.0.0.1'), /unknown scheme with no explicit port/)
     })
 
     it('accepts a local MQTT 5 broker on another port, and the contract default over TLS', () => {
         assert.doesNotThrow(() => assertSafeBroker('mqtt://127.0.0.1:1884'))
-        assert.doesNotThrow(() => assertSafeBroker('mqtts://broker.example.com'))
-        assert.doesNotThrow(() => assertSafeBroker('wss://broker.example.com'))
+        assert.doesNotThrow(() => assertSafeBroker('mqtt://localhost:1884'))
+        assert.doesNotThrow(() => assertSafeBroker('mqtts://127.0.0.1'))
+        assert.doesNotThrow(() => assertSafeBroker('wss://[::1]'))
         assert.equal(brokerPort(new globalThis.URL('mqtts://broker.example.com')), '8883')
     })
 })

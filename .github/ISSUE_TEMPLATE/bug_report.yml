@@ -1,0 +1,24 @@
+name: Bug in the kit
+description: The kit does something this README or the contract page says it should not.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste credentials or your `.env`. The output of `pnpm efk check --json` contains no secrets.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Output of `pnpm efk --version`
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `pnpm efk check --json`
+      render: json

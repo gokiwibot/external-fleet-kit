@@ -50,7 +50,8 @@ Clone it, drop in the `.env` Robot.com sent you, run it: your simulated bots sho
 10. [Testing](#10-testing)
 11. [Project Structure](#11-project-structure)
 12. [Public documentation](#12-public-documentation)
-13. [License](#13-license)
+13. [Versioning and support](#13-versioning-and-support)
+14. [License](#14-license)
 
 ## 1. Software System
 
@@ -893,6 +894,13 @@ external-fleet-kit/
 
 remi documents this kit and the sandbox at [`/docs/external-fleets/kit`](https://remi.kiwi/docs/external-fleets/kit), next to the [External Fleets contract](https://remi.kiwi/docs/external-fleets). That page says what this README says, in less space, and links here for detail. When they disagree, this README wins and the page gets corrected: today the page still says that remi does not handle `supports_command_interrupt: false`, which is no longer true (see [Scenarios](#scenarios--what-each-knob-reproduces)).
 
-## 13. License
+## 13. Versioning and support
+
+- The kit follows [semver](https://semver.org/). While it is `0.x`, a minor version may change behaviour, and `CHANGELOG.md` says what changed.
+- `RobotDriver` v1 (`driverVersion: 1`) is the interface your driver implements. It stays stable within `0.x` unless a release announces otherwise in `CHANGELOG.md`.
+- `CONTRACT_VERSION` (`src/contract/version.ts`) is the contract version the kit is frozen against. `pnpm efk --version` prints it, with the `data.ts` commit the samples came from.
+- Support for your integration goes through your Robot.com onboarding contact, not through issues. Issues are for defects in the kit itself, and vulnerabilities go through [`SECURITY.md`](SECURITY.md).
+
+## 14. License
 
 Apache-2.0 (see `LICENSE` and `NOTICE`).

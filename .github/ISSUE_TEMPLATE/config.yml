@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: External Fleets contract
+    url: https://remi.kiwi/docs/external-fleets
+    about: What remi expects from your fleet, endpoint by endpoint. Questions about the contract start here.
+  - name: Help with your integration
+    url: https://remi.kiwi/docs/external-fleets/kit
+    about: Onboarding, credentials and support for your fleet go through your Robot.com onboarding contact, not through issues.

@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+- `efk check` C9 fails a driver whose `supportedCommands` lacks `navigate_to` or `cancel_navigation`. remi requires both and rejects a capabilities document whose default lacks them (`400 CAPABILITIES_MISSING_REQUIRED_COMMANDS`); until now the preflight passed such a fleet and `efk start` only logged the refusal.
+- The opt-in MQTT wire test accepts only a broker on this machine (`localhost`, `127.0.0.1`, `[::1]`), off port 1883. It used to refuse one production host by name.
+- CI pins its actions by commit SHA and runs with a read-only token.
+
+### Documentation
+- `out_of_service` does not make a bot unavailable: remi keeps assigning it, alerts its operators while it carries a job, and clears the alert when the field goes back to `false`. The README and the `botState` schema still described the old behaviour (parked `off_duty`, one-way).
+- Comments say what the code does, without references to internal planning documents.
+- `SECURITY.md` (private vulnerability reporting), issue forms that point contract questions and integration support at the docs and the onboarding contact, `CODEOWNERS`, and a README section on versioning and support.
+
 ## [0.1.0] - 2026-10-27
 
 Contract `2026-09`, samples frozen from kiwi-platforms `54df6f670` (`data.ts` sha256 `3dea23d7…`). The first tagged version: the kit as first written (*Initial kit*, at the end of this entry) plus what its first fork taught it.

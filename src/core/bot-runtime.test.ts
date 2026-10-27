@@ -29,7 +29,7 @@ function harness(overrides: { supportsCommandInterrupt?: boolean; maxUnpublished
     const ledger = createCommandLedger({
         now: clock.now,
         maxUnpublishedTerminals: overrides.maxUnpublishedTerminals,
-        // What Task 8 wires: the cap must never discard an outcome quietly.
+        // What the fleet manager wires: the cap must never discard an outcome quietly.
         onTerminalDropped: (id, pending) =>
             bus.emit('log', {
                 level: 'warn',

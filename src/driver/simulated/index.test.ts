@@ -366,7 +366,7 @@ describe('simulated() factory', () => {
     it('keeps the simulator surface and still fits where a bare DriverFactory is expected', () => {
         const factory = simulated({ scenario: 'default', now: () => T0, randomFor: () => fixed(0.5) })
         // The compile-time half of the claim: `DriverFactory` is generic in the driver it builds
-        // (one declaration, ruling R12), so the narrow factory assigns to the bare one — the return
+        // (one declaration), so the narrow factory assigns to the bare one — the return
         // type is covariant — and the CLI/TUI get `tick()` and the toggles with no cast and no guard.
         const plain: DriverFactory = factory
         const d = factory('ACME-0001', { origin })
@@ -584,9 +584,9 @@ describe('each bundled scenario does what its name says', () => {
         assert.equal(d.snapshot().speedMps, 0)
     })
     it('no-interrupt: inert on purpose — identical to default, with the knob documented where it lives', () => {
-        // Controller ruling R18. `supports_command_interrupt` is a FLEET capability, not a per-bot
+        // `supports_command_interrupt` is a FLEET capability, not a per-bot
         // scenario field, so this file cannot carry it and parses exactly like `default.json`. It
-        // ships because the design names seven scenarios; the note is what stops it being an
+        // ships because the kit has seven scenarios; the note is what stops it being an
         // unexplained duplicate.
         assert.deepEqual(loadScenario('no-interrupt'), loadScenario('default'))
         const note = SCENARIO_NOTES['no-interrupt'] ?? ''

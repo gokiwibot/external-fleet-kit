@@ -1,5 +1,5 @@
 /**
- * The fleet manager (design §9): discovers the roster from remi, builds one BotRuntime per bot, wires
+ * The fleet manager: discovers the roster from remi, builds one BotRuntime per bot, wires
  * the transport, sends the capabilities document to remi, and runs the 250 ms tick that asks each
  * runtime whether it has a state to publish. Nothing here knows how a robot moves (driver) or how
  * bytes travel (transport).
@@ -101,7 +101,7 @@ export interface FleetManager {
     reconcileOnce(): Promise<void>
     /**
      * The poll path: the whole fleet's current states, each acknowledged as delivered. This is what
-     * `GET /bots` answers with (Task 14) and the ONLY way the ledger drains in HTTP polling mode.
+     * `GET /bots` answers with and the ONLY way the ledger drains in HTTP polling mode.
      * The returned states carry no `seq`, because a poll consumes no counter (`data.ts:676`).
      */
     serve(): ServedState[]
@@ -262,7 +262,7 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
      * at remi. It is also serialised with `ticking`: without that, a slow flush overlaps the next tick
      * and the retries pile up on each other.
      *
-     * The transport travels INTO `runtime.tick()` (Task 6, THE PUBLISH SEAM): the runtime consumes the
+     * The transport travels INTO `runtime.tick()` (THE PUBLISH SEAM, see `bot-runtime.ts`): the runtime consumes the
      * `seq` and drains the ledger only for a state the transport confirmed, and hands that state back.
      * A null answer means the tick was not due, the state did not assemble, or the transport refused
      * it — in all three cases nothing was published, so `state.published` must not fire.
@@ -310,7 +310,7 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
             // assembly, including a tick whose transport REFUSED the state, so it can carry an
             // outcome remi has not seen. Acknowledging it would pop that outcome off the queue for a
             // state that never left the process, and remi would never learn how the command it
-            // issued ended. The second is the one Task 6 documents: with the queue empty it would
+            // issued ended. The second is the one `bot-runtime.ts` documents: with the queue empty it would
             // move the ledger's `lastPublishedId` backwards onto a superseded command.
             // Serve it, acknowledge nothing.
             const fallback = runtime.lastValidState()
@@ -631,7 +631,7 @@ export function createFleetManager(deps: FleetManagerDeps): FleetManager {
             for (const off of subscriptions.splice(0)) off()
             for (const runtime of runtimes) await runtime.stop()
             await transport?.stop()
-            // The persisted counters survive the process only if they are flushed here (Seq, Task 3).
+            // The persisted counters survive the process only if they are flushed here.
             deps.seq.flush()
             runtimes = []
             drivers.clear()

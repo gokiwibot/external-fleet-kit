@@ -36,7 +36,7 @@ describe('efk entry point', () => {
     })
 
     /**
-     * DEBT 4 (controller ruling R18). `SCENARIO_NOTES` existed but had no consumer, so no user had
+     * `SCENARIO_NOTES` existed but had no consumer, so no user had
      * ever seen the one explanation that matters: `no-interrupt` parses IDENTICALLY to `default`,
      * because the knob its name promises is a fleet capability in `efk.config.ts` and not a scenario
      * field. Without the note that file is an unexplained duplicate.

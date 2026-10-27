@@ -1,4 +1,4 @@
-/** Test doubles shared by the core tests. They are not part of the package's public surface (`src/index.ts` does not re-export them), but they are ordinary modules and `efk start --demo` imports the fake remi client that lives next to them (`fake-remi.ts`, Task 7). */
+/** Test doubles shared by the core tests. They are not part of the package's public surface (`src/index.ts` does not re-export them), but they are ordinary modules and `efk start --demo` imports the fake remi client that lives next to them (`fake-remi.ts`). */
 import type { BotCapabilities } from '../contract/schemas'
 import type { DriverAccept, DriverEvents, DriverSnapshot, RobotDriver } from '../driver/robot-driver'
 

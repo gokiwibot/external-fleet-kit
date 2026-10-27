@@ -1,10 +1,10 @@
 /**
  * One bot = one driver + one ledger + the assembly of BotState. Everything above the driver that the
- * contract requires happens here (design §5, responsibilities table): idempotency, expiry and
+ * contract requires happens here: idempotency, expiry and
  * capability checks before the driver is called, the rejected/failed/DRIVER_ERROR split, the seq,
  * the timestamp, zod validation before publishing, and the cadence decision per tick.
  *
- * THE PUBLISH SEAM (ruling R4). A state is not published because the kit decided to publish it — it
+ * THE PUBLISH SEAM. A state is not published because the kit decided to publish it — it
  * is published when a transport says it left the process. So `assemble()` only builds a state — it
  * consumes no counter and acknowledges nothing, its one side effect being the `lastValidState()`
  * snapshot it refreshes — and `tick()` takes the transport with it: it hands the state, `seq` stamped, to
@@ -97,7 +97,7 @@ export interface BotRuntime {
      * carries and drains the ledger — so a batch that is skipped, superseded, given up on, or still
      * pending at `stop()` is simply never confirmed: the counter stays unspent and the outcome stays
      * queued for remi. Answering `true` on the way into a buffer instead is how an outcome remi is
-     * owed gets marked delivered for bytes that never left (ruling R4).
+     * owed gets marked delivered for bytes that never left.
      *
      * It refuses anything but the state whose `seq` is the one still reserved, so a double
      * confirmation cannot burn a counter or pop a queue head that belongs to another outcome.
@@ -113,13 +113,13 @@ export interface BotRuntime {
     lastValidState(): BotState | null
     currentCommand(): CommandStatus | null
     /**
-     * For `GET /bots/:bot_id/commands/*` (Task 14). The live entry: read it, never mutate it — and
+     * For `GET /bots/:bot_id/commands/*`. The live entry: read it, never mutate it — and
      * check `internalCode` before rendering `status`, because an entry displaced by a newer
      * navigation carries the kit-internal `REPLACED` code that must not reach remi (see
      * `publishableCommand`, which is the same rule for the state).
      */
     ledgerEntry(id: string): LedgerEntry | undefined
-    /** For `POST /destinations/validate` (Task 14). */
+    /** For `POST /destinations/validate`. */
     validateDestination(position: Position): Promise<DestinationValidation>
     snapshot(): DriverSnapshot
     capabilities(): BotCapabilities

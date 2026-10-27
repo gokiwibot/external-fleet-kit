@@ -1,5 +1,5 @@
 /**
- * `efk check`: the partner-side conformance (design §7). Nine rules, PASS / WARN / FAIL / SKIP, each
+ * `efk check`: the partner-side conformance. Nine rules, PASS / WARN / FAIL / SKIP, each
  * with the fix spelled out. Read-only: it never publishes state, never creates orders, never touches
  * remi. C5 connects with a DIAGNOSTIC client id so it never evicts a live bot. C6 is at best a WARN:
  * a request from this machine to its own public URL does not prove remi can reach it.

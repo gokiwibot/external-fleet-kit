@@ -9,7 +9,7 @@
  *
  * Writes SOURCE.json with { commit, sha256, extractedAt, files, skipped }. `sha256` is ALWAYS the
  * digest of the data.ts the samples came from, and `commit` is the commit it was read at; the two
- * names match `KIT_SYNC.json` on the remi side (Task 4 of the remi plan), which records the same
+ * names match `KIT_SYNC.json` next to the contract page on the remi side, which records the same
  * digest as `data_ts_sha256`. There is no `baseSha256`: one digest, one name, or the drift job on the
  * remi side compares against a field that does not exist.
  */

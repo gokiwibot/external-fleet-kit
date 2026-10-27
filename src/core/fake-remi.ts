@@ -1,6 +1,6 @@
 /**
  * A RemiClient that answers from memory. Two consumers, which is why it is a module and not a
- * fixture inside a test file: the FleetManager test (Task 8) and `efk start --demo` (Task 16), which
+ * fixture inside a test file: the FleetManager test and `efk start --demo`, which
  * lets someone look at the TUI and the dashboard with no credentials and no network.
  *
  * It is NOT a mode anyone should run against real robots: every answer is invented, nothing reaches

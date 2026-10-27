@@ -5,8 +5,8 @@ import { PAGE_HTML } from './page'
 
 /**
  * This file does NOT call any exported helper directly — `page.ts` exports only `PAGE_HTML`, a
- * string, on purpose (design §8: it is plain HTML plus a `<script>`, nothing importable). The
- * project's own lesson (see the task-b brief) is that a suite that only calls functions never
+ * string, on purpose (it is plain HTML plus a `<script>`, nothing importable). The
+ * project's own lesson is that a suite that only calls functions never
  * exercises the seam a reader lives through: the browser parses the real skeleton, runs the real
  * `<script>` text against it, a real click bubbles through `closest()`, and a real `fetch()` POST
  * comes back before anything re-renders. So this harness builds a tiny DOM out of the ACTUAL

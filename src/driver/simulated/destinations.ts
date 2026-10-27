@@ -1,5 +1,5 @@
 /**
- * Destination correction, with the values of Task 13 of the F1–F4 plan (grid 0.0002°, threshold
+ * Destination correction, with fixed values (grid 0.0002°, threshold
  * 300 m) but measured from the FLEET ORIGIN, never from the bot: the contract requires
  * POST /destinations/validate to be idempotent ("the same coordinate must return the same answer"),
  * and anything measured from the bot changes every second.

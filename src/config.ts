@@ -9,8 +9,8 @@ import { pathToFileURL } from 'node:url'
 import type { DriverFactory } from './driver/robot-driver'
 
 /**
- * Re-exported, NOT re-declared: `DriverFactory` has exactly one declaration, in `robot-driver.ts`
- * (controller ruling R12), because the simulated driver and this loader both need it and a second
+ * Re-exported, NOT re-declared: `DriverFactory` has exactly one declaration, in `robot-driver.ts`,
+ * because the simulated driver and this loader both need it and a second
  * copy is how the two drift apart. A partner's `efk.config.ts` can import the name from here.
  */
 export type { DriverFactory }

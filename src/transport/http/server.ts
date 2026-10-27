@@ -1,5 +1,5 @@
 /**
- * The remaining endpoints of "Endpoints you implement" (design §9.5) — `/capabilities` is gone; remi
+ * The remaining endpoints of "Endpoints you implement" — `/capabilities` is gone; remi
  * now stores the document instead of polling for it (`RemiClient.setCapabilities`). Bearer
  * HTTP_TOKEN; 202 and never 200 on a command; 4xx with the contract codes; 503 DRIVER_ERROR when the
  * driver threw. That 503 does NOT make remi retry — the contract declares no 5xx policy, and saying
@@ -43,7 +43,7 @@ export type PartnerAppDeps = {
 }
 
 /**
- * The one and only mapping from a rejection code to an HTTP status. The TUI imports THIS (Task 17)
+ * The one and only mapping from a rejection code to an HTTP status. The TUI imports THIS
  * instead of keeping its own copy: two tables mean the dashboard can say 409 while the wire carried
  * a 422, and the partner would be debugging the wrong thing.
  */

@@ -1,7 +1,7 @@
 /**
  * `efk start`: lock → env → config → remi → fleet manager → transport → TUI/web. Refuses to start on
  * a second instance, an unparseable .env or a transport mismatch, each with the message the design
- * lists (§9.6).
+ * lists.
  *
  * An EMPTY ROSTER is not among them any more. It used to be a refusal; it is now the idle state a
  * pod legitimately starts in — deployed, registered with remi, and waiting for bots to be registered
@@ -68,7 +68,7 @@ export const DEMO_BANNER = 'DEMO MODE — not connected to remi. Every roster, b
  * a partner's real driver does not, because a real robot moves whether or not anybody calls it.
  *
  * It is a RUNTIME guard and not a cast, because the type is genuinely gone by this point:
- * `DriverFactory` is generic in the driver it builds (ruling R12) and `simulated()` declares itself
+ * `DriverFactory` is generic in the driver it builds and `simulated()` declares itself
  * `DriverFactory<SimulatedRobotDriver>`, but `KitConfig.driver` is the bare `DriverFactory`, so
  * whatever `efk.config.ts` exports arrives here as a plain `RobotDriver`. Asserting the narrow type
  * would call `tick` on a partner's driver that has no such method.
@@ -200,7 +200,7 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
         const manager = deps.createFleetManager({
             remi,
             // The namespace comes from GET /api/v3/fleet, which only the manager has read by the time
-            // the transport is built — hence the config as the second argument (Task 8).
+            // the transport is built — hence the config as the second argument.
             transportFor: (kind, fleetConfig) =>
                 kind === 'mqtt'
                     ? createMqttTransport({
@@ -356,7 +356,7 @@ export async function startWith(options: StartOptions, deps: StartDeps): Promise
             return 0
         } catch (error) {
             /**
-             * DEBT 6 AGAIN, THROUGH A DOOR IT DID NOT NAME. Without this catch a throw out of
+             * THE SAME LOSS, THROUGH ANOTHER DOOR. Without this catch a throw out of
              * `startWeb` or `startTui` leaves `startWith` through the `finally` alone: `shutdown()`
              * never runs, so `manager.stop()` never runs, so **`seq.flush()` never happens** and
              * every counter consumed this run is lost. The bot then reuses numbers on the next start

@@ -1,8 +1,7 @@
 /**
  * The real probes behind `efk check` C5, C6 and C8.
  *
- * NO PROBE EVER FORWARDS THE EXCEPTION IT CAUGHT (controller ruling, cross-task obligation for this
- * task). C5 and C6 echo `probe.error` VERBATIM into their verdict, and that verdict is the first
+ * NO PROBE EVER FORWARDS THE EXCEPTION IT CAUGHT. C5 and C6 echo `probe.error` VERBATIM into their verdict, and that verdict is the first
  * thing a partner pastes into a support email. A raw throw from mqtt.js or from `fetch` is not a
  * diagnostic the kit controls: it can carry the broker password (mqtt.js builds its message from the
  * connect options on some paths), the bearer token, or the full request URL including any userinfo a
@@ -94,7 +93,7 @@ export async function httpProbe(url: string, token: string): Promise<HttpProbeRe
 }
 
 /**
- * C8 runs the SAME function `parity.test.ts` runs (Task 2), in process. If the two could diverge,
+ * C8 runs the SAME function `parity.test.ts` runs, in process. If the two could diverge,
  * the command a partner is asked to run first and the suite we run in CI could disagree about
  * whether their copy of `src/contract/` is intact.
  */

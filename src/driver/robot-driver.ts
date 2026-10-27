@@ -1,5 +1,5 @@
 /**
- * RobotDriver v1 — the boundary of the kit (design §5).
+ * RobotDriver v1 — the boundary of the kit.
  *
  * Above this interface (idempotency, seq, cadence, validation, transport, TUI) is the kit's job.
  * Below it (how a robot moves, how its door opens, what its battery says) is the driver's job.
@@ -135,7 +135,7 @@ export async function defaultValidateDestination(position: Position): Promise<De
  * anyone has filled them in. A driver that genuinely needs an origin says so when it is built — see
  * `simulated()` — rather than the kit refusing to start for a driver that never reads it.
  *
- * Declared here, and only here (controller ruling R12): the simulated driver and the CLI config
+ * Declared here, and only here: the simulated driver and the CLI config
  * loader both need it, the simulated driver's own module runs before the config loader exists, and
  * `robot-driver.ts` depends on nothing, so it is already loadable by both.
  *
@@ -147,7 +147,7 @@ export async function defaultValidateDestination(position: Position): Promise<De
  * GENERIC in the driver it builds, defaulting to `RobotDriver`. A factory that builds something
  * richer — `simulated()` builds a `SimulatedRobotDriver`, which adds `tick()` and the TUI toggles —
  * says so as `DriverFactory<SimulatedRobotDriver>` and still assigns to a bare `DriverFactory`,
- * because the return type is covariant. That keeps ONE declaration (ruling R12) while sparing the
+ * because the return type is covariant. That keeps ONE declaration while sparing the
  * CLI (which drives `tick()`) and the TUI (the toggles) a cast or a type guard. The transport needs
  * neither: `connected` is contract-required on every snapshot, so it reads the snapshot, not
  * `wantsConnection()`.

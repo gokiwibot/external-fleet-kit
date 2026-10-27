@@ -16,7 +16,7 @@ describe('destinations', () => {
             correction_distance_m: 0,
         })
     })
-    it('snaps to the grid and reports the distance (Task 13 of the F1–F4 plan: 0.0002 ≈ 22 m cells)', () => {
+    it('snaps to the grid and reports the distance (0.0002 ≈ 22 m cells)', () => {
         const d = createDestinations(botScenarioSchema.parse({ destinations: { snapGridDeg: 0.0002 } }).destinations, origin)
         const r = d.resolve({ lat: 0.00011, lng: 0 })
         assert.equal(r.kind, 'ok')

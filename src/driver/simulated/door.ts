@@ -1,7 +1,7 @@
 /**
- * The cargo door, four modes (design §6). `full` is bot-sim's `normal` renamed; `boolean` is new
+ * The cargo door, four modes. `full` is bot-sim's `normal` renamed; `boolean` is new
  * and is what a partner with a `lid.isOpen` boolean publishes — no transients ever — which is why
- * the remi bridge synthesises them (F1–F4 plan, Task 21). `stalled` and `ignore` are faults.
+ * the remi bridge synthesises them. `stalled` and `ignore` are faults.
  */
 import type { DoorState } from '../../contract/schemas'
 import type { BotScenario } from './scenario'

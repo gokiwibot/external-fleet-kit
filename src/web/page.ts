@@ -2,7 +2,7 @@
  * The dashboard page: four views fed by `/events`, redesigned to match remi-pro's own docs pages
  * (`/docs/delivery-api`) so the kit looks like the product it integrates with — plus the manual
  * fault controls Task A exposed (BOTS view only: click a row, then a control bar drives available/
- * door/link/blocked for that bot). Plain HTML, plain CSS, one vanilla `<script>` (design §8): no UI
+ * door/link/blocked for that bot). Plain HTML, plain CSS, one vanilla `<script>`: no UI
  * framework, no build step, no front-end dependency. The palette below is lifted from the docs pages
  * verbatim, including their two deliberate quirks: no green anywhere (a healthy state is the `GET`
  * badge cyan), and the LOG view alone sits on the docs' dark code surface, because it is the one view

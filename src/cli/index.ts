@@ -137,7 +137,7 @@ async function main(): Promise<number> {
             /**
              * From the package, not from process.cwd(): `efk` is run from a partner's own project.
              *
-             * THE NOTE IS NOT DECORATION (controller ruling R18). `no-interrupt` parses IDENTICALLY
+             * THE NOTE IS NOT DECORATION. `no-interrupt` parses IDENTICALLY
              * to `default` — the knob its name promises, `supports_command_interrupt`, is a fleet
              * capability set in `efk.config.ts`, so there is nothing for the JSON to say. Until
              * something printed `SCENARIO_NOTES` no user had ever seen that explanation, and the

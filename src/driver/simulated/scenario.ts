@@ -3,7 +3,7 @@
  * `overrides`, and where the fleet appears. Every field has a default (`{}` is the default
  * scenario), as in bot-sim's `spec.ts`, and `.prefault({})` is the zod 4 way to default a nested
  * object whose fields have defaults. The fault catalogue IS this schema: every failure the
- * simulator reproduces is a field here (design §6.2).
+ * simulator reproduces is a field here.
  *
  * TWO SHAPES PER BLOCK, and the reason matters. `botScenarioSchema` is the EFFECTIVE scenario: every
  * field present, defaults applied. `botScenarioOverrideSchema` is what a JSON file may write: the

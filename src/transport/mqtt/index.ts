@@ -1,10 +1,10 @@
 /**
- * MQTT transport (design §9.4): one connection per bot with the contract's client id, retained state,
+ * MQTT transport: one connection per bot with the contract's client id, retained state,
  * non-retained events, command subscription per bot, and exponential backoff with jitter on CONNECT
  * failures. A bot whose driver reports `connected: false` (link offline/flapping) has its connection
  * closed for real, so the broker — not a payload — tells remi it is gone.
  *
- * RECOVERY (ruling R3). `reconnectPeriod: 0` means mqtt.js never reconnects on its own, so a broker
+ * RECOVERY. `reconnectPeriod: 0` means mqtt.js never reconnects on its own, so a broker
  * restart, a kicked session or a network drop would otherwise leave a non-null, DEAD connection in
  * the slot: `publishState` would keep answering `true` for publishes that go nowhere and the backoff
  * would never run, because the only thing that opens a connection is a slot whose connection is
@@ -83,7 +83,7 @@ export function createMqttTransport(
         try {
             await connection.connect()
             const { grantedQos } = await connection.subscribe(fleetTopic(deps.namespace, botId, 'command'), 1, (topic, payload) => {
-                // Ruling R24b: the topic is untrusted input from the broker, so it is read with the
+                // The topic is untrusted input from the broker, so it is read with the
                 // contract's own parser instead of being split by hand — same grammar, same bot id
                 // length cap, one place. A wildcard subscription the broker widened, or a retained
                 // message on a neighbour's topic, must not be handed to this bot's runtime.
@@ -120,7 +120,7 @@ export function createMqttTransport(
             if (slot.connection === connection) slot.connection = null
             await connection.end().catch(() => {})
             const wait = scheduleRetry(slot)
-            // CONSTRUCTED, NEVER FORWARDED (controller ruling; see `failure.ts` and `net-failure.ts`).
+            // CONSTRUCTED, NEVER FORWARDED (see `failure.ts` and `net-failure.ts`).
             // mqtt.js composes its text from the connect options it was handed, so quoting it here
             // would put the broker password into the operator's log.
             const message = describeMqttFailure(error)
@@ -132,9 +132,9 @@ export function createMqttTransport(
                     botId,
                 )
             } else if (isProtocolVersionRejection(error)) {
-                // Ruling R2: the kit speaks MQTT 5 and only MQTT 5, so this one never resolves itself
+                // The kit speaks MQTT 5 and only MQTT 5, so this one never resolves itself
                 // by waiting. It stays at `error` level on every attempt — a silent retry loop is
-                // exactly what the ruling forbids — and it never suggests the credential remedy,
+                // exactly what must not happen — and it never suggests the credential remedy,
                 // which would be the wrong afternoon to send the partner on.
                 log(
                     'error',
@@ -166,7 +166,7 @@ export function createMqttTransport(
         deps.bus.emit('link.changed', { botId: slot.runtime.botId, connected: false, reason })
     }
 
-    /** An established connection the broker or the network dropped (ruling R3): backoff, then reconnect. */
+    /** An established connection the broker or the network dropped: backoff, then reconnect. */
     const handleDrop = async (slot: Slot) => {
         const botId = slot.runtime.botId
         const connection = slot.connection
@@ -201,9 +201,8 @@ export function createMqttTransport(
         async start(bots) {
             for (const runtime of bots) {
                 // The link policy reads `snapshot().connected`, which every driver owes the contract,
-                // and the runtime forwards. (The brief's `Consumes` line promises a `'wantsConnection'
-                // in driver` detection instead; ruling R0 makes the Step code win, and this needs no
-                // cast and no knowledge of which driver is underneath.)
+                // and the runtime forwards. (Detecting a `'wantsConnection' in driver` method instead
+                // would need a cast and knowledge of which driver is underneath; this needs neither.)
                 slots.set(runtime.botId, {
                     runtime,
                     connection: null,

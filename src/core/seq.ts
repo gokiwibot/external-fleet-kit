@@ -21,7 +21,7 @@ export type SeqDeps = {
  * at 4 Hz would be 800 synchronous writes a second onto the same file, which is both a stall and a
  * much wider window for a torn file. What the debounce risks is losing up to a second of counters on
  * a kill -9 — and that costs a handful of states rejected by remi's `seq` guard after a restart,
- * which is exactly the trade the design accepts (§9.2). `stop()` flushes, so an orderly exit loses
+ * which is exactly the trade the kit accepts. `stop()` flushes, so an orderly exit loses
  * nothing. The timer is injected so the test does not sleep.
  */
 export function createSeq(store: StateStore, deps: SeqDeps = {}): Seq {

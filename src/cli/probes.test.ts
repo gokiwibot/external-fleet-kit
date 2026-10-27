@@ -1,7 +1,7 @@
 /**
- * DEBT 5. `efk check` C5 and C6 echo `probe.error` VERBATIM into the verdict a partner pastes into a
+ * `efk check` C5 and C6 echo `probe.error` VERBATIM into the verdict a partner pastes into a
  * support email, so the probe — not the caller — is responsible for what that string contains. The
- * brief's probes returned `error.message` straight from mqtt.js and from `fetch`.
+ * first probes returned `error.message` straight from mqtt.js and from `fetch`.
  *
  * The tests that matter here are the ones that hand a classifier a throw which REALLY carries a
  * credential. Asserting "no password appeared" after a plain connection failure proves nothing: the

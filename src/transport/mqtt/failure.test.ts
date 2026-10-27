@@ -51,7 +51,7 @@ describe('describeMqttFailure, against an exception mqtt.js really threw', () =>
         assert.doesNotMatch(described, /not authori/i, 'or C5 would print the credential remedy for a closed port')
     })
 
-    it('recognises both CONNACK spellings of a protocol-version rejection (ruling R2)', () => {
+    it('recognises both CONNACK spellings of a protocol-version rejection', () => {
         // Moved here from `connection.ts` so the classification lives in one place; same behaviour.
         assert.equal(isProtocolVersionRejection(Object.assign(new Error('x'), { code: 132 })), true, 'MQTT 5, 0x84')
         assert.equal(isProtocolVersionRejection(Object.assign(new Error('x'), { code: 1 })), true, '3.1.1, return code 1')

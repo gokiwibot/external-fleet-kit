@@ -2,7 +2,7 @@
  * The MQTT transport against a broker double.
  *
  * WHY A DOUBLE AND NOT AN IN-PROCESS BROKER: the kit connects with `protocolVersion: 5` and nothing
- * else (ruling R2), and `aedes` — which the plan named, and which this repo carried as a
+ * else, and `aedes` — which this repo carried as a
  * devDependency until this task removed it — answers an MQTT 5 CONNECT with CONNACK return code 1,
  * "unacceptable protocol version", in 0.51.x and in 1.x alike (`lib/handlers/connect.js`:
  * `if (packet.protocolVersion < 3 || packet.protocolVersion > 4)`). Verified against the installed
@@ -88,7 +88,7 @@ class FakeConnection implements MqttConnection {
         for (const entry of this.handlers) if (entry.topic === topic) entry.handler(topic, payload)
     }
 
-    /** Delivery the wrapper would filter out, to reach the transport's own topic check (ruling R24b). */
+    /** Delivery the wrapper would filter out, to reach the transport's own topic check. */
     deliverRaw(topic: string, payload: string) {
         for (const entry of this.handlers) entry.handler(topic, payload)
     }
@@ -239,7 +239,7 @@ describe('mqtt transport', () => {
         assert.deepEqual(received, ['ACME-0001:J/pickup'], 'a command that does not validate never reaches the runtime')
         assert.match(messages().join('\n'), /did not validate/)
 
-        // Ruling R24b: the topic is parsed with the contract's parser, so a message the broker put
+        // The topic is parsed with the contract's parser, so a message the broker put
         // somewhere else — a widened subscription, a retained payload on a neighbour's topic — is
         // recognised as not this bot's and dropped.
         connection.deliverRaw(fleetTopic('other_partner', 'GW-1', 'command'), command)
@@ -303,7 +303,7 @@ describe('mqtt transport', () => {
     })
 
     /**
-     * Controller ruling: no path a user can see may forward the raw message of an mqtt.js exception.
+     * No path a user can see may forward the raw message of an mqtt.js exception.
      * The classifier is pinned against a real mqtt.js throw in `src/transport/mqtt/failure.test.ts`;
      * this pins the CALL SITE, which is the half that regresses when someone reaches for
      * `error.message` again because it is right there.
@@ -369,7 +369,7 @@ describe('mqtt transport', () => {
         assert.deepEqual(links.at(-1), { botId: 'ACME-0001', connected: true })
     })
 
-    it('recovers from a drop: it notices, backs off once, and reconnects (ruling R3)', async (t) => {
+    it('recovers from a drop: it notices, backs off once, and reconnects', async (t) => {
         const { broker, clock, links, messages, start, transport } = setup(t, ['ACME-0001'])
         await start()
         const first = broker.for('ACME-0001')
@@ -430,7 +430,7 @@ describe('mqtt transport', () => {
 
         // One connection refuses to close. The other 199 must still be closed, not stranded behind it.
         // The failure carries text of the kind mqtt.js can build out of its connect options, so the
-        // report is CONSTRUCTED (controller ruling) — it still says which bot and what happened, and
+        // report is CONSTRUCTED — it still says which bot and what happened, and
         // quotes none of the exception.
         broker.for('ACME-0100').failEnd = new Error('socket already gone for fleet_acme:hunter2')
         await transport.stop()

@@ -11,7 +11,7 @@
  * broker is EMQX and the contract page documents MQTT 5 features the fleet relies on. What the
  * fixed version DOES owe the partner is a legible failure when a broker refuses it, which is what
  * `isProtocolVersionRejection` (now in `failure.ts`, so the classification lives in one place) is
- * for (ruling R2).
+ * for.
  */
 import mqtt, { type MqttClient } from 'mqtt'
 import { describeThrown } from '../../net-failure'
@@ -62,10 +62,10 @@ export function createMqttConnection(options: MqttConnectionOptions): MqttConnec
             // mqtt.js removes its own `error` listener as soon as the connect promise settles, and an
             // EventEmitter that emits `error` with no listener THROWS — a socket reset after a healthy
             // CONNECT would take the whole kit down with it. The transport learns about the drop from
-            // `isConnected()` (ruling R3); this listener exists so the process survives long enough to
+            // `isConnected()`; this listener exists so the process survives long enough to
             // be told. It never prints the credential: only the error's own message.
             // Described, not quoted: mqtt.js builds its text from the connect options, credentials
-            // included (controller ruling; see `failure.ts`).
+            // included (see `failure.ts`).
             connected.on('error', (error: Error) => options.log('warn', `mqtt client error: ${describeMqttFailure(error)}`))
             connected.on('message', (topic, payload) => {
                 for (const { topic: wanted, handler } of handlers) {

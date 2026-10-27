@@ -575,7 +575,7 @@ describe('efk check', () => {
         })
     })
     /**
-     * Finding 1 of fix round 1, and the worst defect this command could have. In demo mode every
+     * The worst defect this command could have. In demo mode every
      * remi answer is invented, so a PASS is a lie a partner will act on — C2 says so loudly, and C7
      * used to say the opposite two lines later, from the same fake.
      */

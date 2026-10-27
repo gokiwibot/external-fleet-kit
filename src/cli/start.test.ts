@@ -1,7 +1,7 @@
 /**
  * `efk start` is a long-running process that owns a lock file, a state file, a fleet and a screen,
  * so what can be tested here is what `startWith` itself decides: the demo announcement, the
- * `--check` wiring, the idempotence of shutdown, and the four cross-task debts that land in this
+ * `--check` wiring, the idempotence of shutdown, and the four failure paths that land in this
  * function. Everything environmental arrives through `StartDeps`, so no test binds a port, reads a
  * `.env`, writes into the repository, or waits ten seconds.
  */
@@ -219,7 +219,7 @@ describe('efk start', () => {
     })
 
     /**
-     * DEBT 1, the critical one. A `.efk-state.json` that cannot be parsed is discarded and every
+     * The critical one. A `.efk-state.json` that cannot be parsed is discarded and every
      * per-bot `seq` restarts at 1. remi discards any state whose `seq` is not above the last one it
      * stored, and a bot a week into a run at 4 Hz sits near 2.4 million — so a silent reset is days
      * of invisible rejection for that bot. Nothing listened to `onDiscard` until this task.
@@ -267,7 +267,7 @@ describe('efk start', () => {
     })
 
     /**
-     * DEBT 2. `acquireLock` has three outcomes, not two: losing a race for a lock whose file we
+     * `acquireLock` has three outcomes, not two: losing a race for a lock whose file we
      * cannot read has no holder to name. The old shape answered `{ held: { pid: -1, since: now } }`,
      * which printed at a partner as "already running (pid -1) since just now" — a pid that does not
      * exist and a timestamp that is ours, not the holder's.
@@ -290,7 +290,7 @@ describe('efk start', () => {
     })
 
     /**
-     * DEBT 3. `scenarioPath(name)` does no validation whatsoever: it joins the name into
+     * `scenarioPath(name)` does no validation whatsoever: it joins the name into
      * `scenarios/<name>.json`, so a name with `..` in it reads an arbitrary JSON file off the
      * partner's disk. The known list is the entire grammar this flag has.
      */
@@ -337,7 +337,7 @@ describe('efk start', () => {
     })
 
     /**
-     * IMPORTANT 1 (review round 2). `startWith` had a `finally` and no `catch`, so a throw out of
+     * `startWith` had a `finally` and no `catch`, so a throw out of
      * `startWeb` or `startTui` left the function without ever running `shutdown()` — no
      * `manager.stop()`, therefore no `seq.flush()`, therefore every counter consumed this run lost.
      * That is debt 6 exactly, arriving through a door the debt did not name, and `EADDRINUSE` on

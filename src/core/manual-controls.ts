@@ -1,12 +1,12 @@
 /**
- * The manual fault controls (Task 12): available/door/link/blocked. Originally lived only in
- * `src/tui/model.ts`; the web dashboard now drives the same four controls (controller ruling 1), so
+ * The manual fault controls: available/door/link/blocked. Originally lived only in
+ * `src/tui/model.ts`; the web dashboard now drives the same four controls, so
  * they live here — a module BOTH interfaces import — instead of the web reaching into `src/tui/`,
  * which would wire a dependency between two sibling interfaces that must not diverge.
  *
- * This crosses design §8 ("TUI, web and log are observers of the bus; no logic lives in them") on
+ * This crosses the kit's observer rule ("TUI, web and log are observers of the bus; no logic lives in them") on
  * purpose, for both interfaces now, and it is written down in the kit's README rather than left as a
- * silent side effect (controller ruling 2).
+ * silent side effect.
  */
 
 import type { DriverSnapshot, RobotDriver } from '../driver/robot-driver'
@@ -14,7 +14,7 @@ import { describeThrown } from '../net-failure'
 import type { FleetManager } from './fleet-manager'
 
 /**
- * The manual fault keys only work on a driver that exposes the simulated controls (Task 12).
+ * The manual fault keys only work on a driver that exposes the simulated controls.
  *
  * `setOffline` takes `boolean | null` because that is what the simulated driver takes, and the `null`
  * is the half that matters: `true`/`false` PIN the link, and only `null` hands it back to the

@@ -1,11 +1,10 @@
 /**
- * Every command a bot has ever been asked to run, by id. This is where idempotency lives (design
- * §9.3): a known id never reaches the driver again, and the caller answers with the recorded status.
+ * Every command a bot has ever been asked to run, by id. This is where idempotency lives: a known id never reaches the driver again, and the caller answers with the recorded status.
  * `accept()` and `reject()` on an id already in the ledger record nothing and return the status that
  * is already there — remi resends the same id up to three times, and a resend must never restamp a
  * command, move a terminal backwards, or erase an outcome that has not been published yet.
  *
- * `rejected` and `failed` are different things (umbrella H1): rejected never started, failed was
+ * `rejected` and `failed` are different things: rejected never started, failed was
  * accepted and will not finish. `REPLACED` is an internal marker for a navigation displaced by a
  * newer one under `supports_command_interrupt`; the contract has no such state, so it never leaves
  * this module — `current_command` simply becomes the new command.

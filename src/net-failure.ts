@@ -1,7 +1,7 @@
 /**
  * How the kit describes a network failure to a human, and the rule behind every line of it:
  *
- * **THE ERROR STRING IS CONSTRUCTED, NEVER FORWARDED** (controller ruling). `fetch` and mqtt.js build
+ * **THE ERROR STRING IS CONSTRUCTED, NEVER FORWARDED**. `fetch` and mqtt.js build
  * their own messages out of the request they were given, and that includes credentials. This is not a
  * precaution — it is measured, on this machine, with the stock node that runs the kit:
  *

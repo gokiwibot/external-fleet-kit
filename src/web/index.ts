@@ -5,8 +5,8 @@
  * still needs to flip a bot's battery-starved availability, jam a door, pin a link down, or force a
  * `blocked` event. Binds to 127.0.0.1 by default.
  *
- * THIS CROSSES DESIGN §8 ON PURPOSE ("TUI, web and log are observers of the bus; no logic lives in
- * them"). The TUI already crossed it (Task 12); the web now does too, deliberately — see the kit's
+ * THIS CROSSES THE KIT'S OBSERVER RULE ON PURPOSE ("TUI, web and log are observers of the bus; no logic lives in
+ * them"). The TUI already crossed it; the web now does too, deliberately — see the kit's
  * README, web section, and `../core/manual-controls`, where the logic itself lives so neither
  * interface has its own copy to drift from the other's.
  *

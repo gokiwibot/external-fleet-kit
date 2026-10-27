@@ -1,5 +1,5 @@
 /**
- * The only remi surface the kit touches (umbrella §3.3): fleet config, the bot mirror, deliveries
+ * The only remi surface the kit touches: fleet config, the bot mirror, deliveries
  * for `efk order`, the two push endpoints, and the capabilities document. Never PATCH /fleet, never
  * the roster endpoints. `fetch` is injected so every test runs without a network.
  */
@@ -82,7 +82,7 @@ export function createRemiClient(deps: { baseUrl: string; apiKey: string; fetch?
             })
         } catch (error) {
             /**
-             * CONSTRUCTED, NEVER FORWARDED (controller ruling; see `net-failure.ts`). `fetch` builds
+             * CONSTRUCTED, NEVER FORWARDED (see `net-failure.ts`). `fetch` builds
              * its message out of the request it was given: a `REMI_API_URL` of the form
              * `https://user:password@host` makes it throw with the WHOLE URL, password included, in
              * the text. This result's `message` is printed by `efk check` C2 and by `efk start`, so

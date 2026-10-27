@@ -286,7 +286,7 @@ describe('remi client requests the exact URL remi serves (no trailing slash)', (
 /**
  * The `NETWORK` result, through the REAL `fetch` — no injected double — because the defect being
  * pinned is what node puts in its own exception, and only node can be the authority on that.
- * `efk check` C2 and `efk start` both print this `message` (controller ruling: constructed, never
+ * `efk check` C2 and `efk start` both print this `message` (constructed, never
  * forwarded). The only host is a CLOSED port on 127.0.0.1.
  */
 describe('a network failure is described, never quoted', () => {

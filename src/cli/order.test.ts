@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { RemiClient } from '../remi/client'
-// DEBT 8: the brief's version used `as Env` without importing the type. With `verbatimModuleSyntax`
+// An earlier version used `as Env` without importing the type. With `verbatimModuleSyntax`
 // and `strict` that does not typecheck, so the test it belongs to could never have run.
 import type { Env } from './env'
 import { createOrder, watchOrder } from './order'

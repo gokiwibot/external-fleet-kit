@@ -1,7 +1,7 @@
 /**
  * The TUI view-model. Pure: `reduce` folds bus events into bounded, newest-first rows, and the Ink
  * components only render what is here. Keeping it pure is what makes the grouping of resends and
- * the echo latency testable without a terminal (design §8, §11).
+ * the echo latency testable without a terminal.
  *
  * NOTHING HERE MAY THROW ON A BAD PAYLOAD. The TUI is the partner's window onto a running fleet, and
  * a row it cannot render must not take the simulation down with it: an exception inside `reduce`
@@ -17,7 +17,7 @@ import { REJECTION_STATUS } from '../transport/http/server'
 
 /**
  * The manual fault controls used to live here. They moved to `../core/manual-controls` so the web
- * dashboard could drive them too without importing from `tui/` (controller ruling 1) — re-exported
+ * dashboard could drive them too without importing from `tui/` — re-exported
  * here so nothing that already imports them from the TUI's model has to change.
  */
 export {
@@ -90,7 +90,7 @@ export function hhmmss(ms: number): string {
 }
 
 /**
- * The same map the HTTP transport answers with (Task 14), widened at the boundary so an unexpected
+ * The same map the HTTP transport answers with, widened at the boundary so an unexpected
  * code reads as `4xx` instead of `undefined`. A second copy of the table here would let the dashboard
  * show 409 for a request that went out as a 422, and the partner would be debugging a discrepancy
  * the kit invented.
@@ -106,7 +106,7 @@ export function outcomeLabel(outcome: CommandOutcome, via: 'mqtt' | 'http'): str
         case 'accepted':
             return via === 'http' ? '202 accepted' : 'accepted'
         case 'duplicate': {
-            // A duplicate replays the original answer, including a rejection's 4xx (Task 14).
+            // A duplicate replays the original answer, including a rejection's 4xx.
             if (outcome.status.state === 'rejected') {
                 const code = outcome.status.error?.code ?? 'REJECTED'
                 return via === 'http' ? `${STATUS_FOR[code] ?? '4xx'} ${code} (resent)` : `rejected ${code} (resent)`

@@ -1,5 +1,5 @@
 /**
- * When to publish a BotState (design §9.1), from the "Cadence" note of POST /state — the stricter
+ * When to publish a BotState, from the "Cadence" note of POST /state — the stricter
  * of the two delivery forms, so the same runtime serves MQTT and HTTP push:
  *  - moving: at least every second;
  *  - any change to available / connected / door / current_command: within 1 s (we publish on the tick);

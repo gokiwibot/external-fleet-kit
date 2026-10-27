@@ -1,5 +1,5 @@
 /**
- * `.efk-state.json`: the one thing the kit persists, and why (design §9.2): the last `seq` per bot,
+ * `.efk-state.json`: the one thing the kit persists, and why: the last `seq` per bot,
  * so a restart stays monotonic against remi's `seq` guard. Written atomically (tmp + rename) so a
  * crash mid-write leaves the previous file, never a truncated one.
  *

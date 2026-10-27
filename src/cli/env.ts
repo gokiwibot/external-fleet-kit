@@ -1,6 +1,6 @@
 /**
- * The .env Robot.com sends. The canonical definition is the provisioning spec §3; this schema IS that
- * table, plus two kit-only optionals (HTTP_PUSH, LOG_LEVEL). Required fields depend on the transport.
+ * The .env Robot.com sends. The canonical definition is the list of variables Robot.com provisions; this schema IS that
+ * list, plus two kit-only optionals (HTTP_PUSH, LOG_LEVEL). Required fields depend on the transport.
  */
 import { readFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'

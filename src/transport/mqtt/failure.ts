@@ -14,7 +14,7 @@ import { describeSocketCode, errorCode } from '../../net-failure'
 const PROTOCOL_VERSION_REASON_CODES: ReadonlySet<number> = new Set([1, 132])
 
 /**
- * Ruling R2 buys "MQTT 5 only, no 3.1.1 fallback" at the price of a legible failure: a CONNACK
+ * "MQTT 5 only, no 3.1.1 fallback" comes at the price of a legible failure: a CONNACK
  * refused over the protocol version must say so, instead of disappearing into the same retry loop
  * as a wrong password — whose remedy ("check MQTT_USERNAME/MQTT_PASSWORD") would send the partner
  * looking in the wrong place for ever. mqtt.js reports it as an `ErrorWithReasonCode` carrying the
@@ -49,8 +49,8 @@ const readsAsNotAuthorised = (error: unknown): boolean =>
     error instanceof Error && /not authori[sz]ed|bad user ?name|bad credentials/i.test(error.message)
 
 /**
- * The order matters: a protocol-version rejection has a remedy that is NOT "check your password"
- * (ruling R2), so it is classified before the generic tables.
+ * The order matters: a protocol-version rejection has a remedy that is NOT "check your password",
+ * so it is classified before the generic tables.
  */
 export function describeMqttFailure(error: unknown): string {
     if (isProtocolVersionRejection(error)) {

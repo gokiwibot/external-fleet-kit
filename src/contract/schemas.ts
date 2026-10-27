@@ -13,12 +13,12 @@
  * everywhere. Strictness on a response the kit does not own turns remi's next additive field into an
  * outage on the partner's side; the divergence buys that back and is reviewed as such.
  *
- * Frozen against the page AFTER PR N2 (see the umbrella spec, findings H1, H2, H5, H6):
+ * Frozen against the page as it documents commands today:
  *  - `CommandStatus.state` has `rejected`, with `rejected_at`; `accepted_at` is optional only then.
  *  - `corrected_position` / `correction_distance_m` live on `CommandStatus`; the distance is also
  *    valid on a `rejected` whose code is `DESTINATION_UNREACHABLE`.
  *  - `FleetCapabilities` is a named type.
- * Names match `packages/external-fleets/src/contract.ts` of the F1–F4 plan where both exist, so a
+ * Names match remi's own contract types where both exist, so a
  * future move to an npm package is an import change.
  */
 import { z } from 'zod'
@@ -213,7 +213,7 @@ export type DestinationValidation = z.output<typeof destinationValidationSchema>
  * What `GET /api/v3/fleet` returns. LOOSE: remi owns this shape and will add to it.
  * `max_bots` has no upper bound here — 200 is today's ceiling, not a law of the contract, and a
  * partner whose fleet grew must not be stopped by the kit's copy of an old number. `efk check` C2
- * WARNs above 200 instead (Task 15).
+ * WARNs above 200 instead.
  */
 export const fleetConfigResponseSchema = z.looseObject({
     namespace: namespaceSchema,

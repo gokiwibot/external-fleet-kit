@@ -1,5 +1,5 @@
 /**
- * SimulatedRobotDriver: N fake bots that behave like robots against the contract (design §6). It only
+ * SimulatedRobotDriver: N fake bots that behave like robots against the contract. It only
  * produces DriverSnapshot and driver events; it knows no topic, no HTTP status, no BotState.
  * Movement is bot-sim's stepper on two-point routes; door, battery, link and destinations are the
  * modules next to this file. Every fault is a scenario field, not a code path.
@@ -53,7 +53,7 @@ type Navigation = {
 export function createSimulatedDriver(options: SimulatedDriverOptions): SimulatedRobotDriver {
     const { botId, scenario, random } = options
     /**
-     * ONE CLOCK, not two (controller ruling, Task 15). The driver used to read `options.now()` for
+     * ONE CLOCK, not two. The driver used to read `options.now()` for
      * the door, the link and the battery while motion advanced on the `nowMs` handed to `tick()`:
      * two clocks that only the tests kept equal by hand, so a caller whose loop time drifted from
      * its `now` left the door living in a different time from the wheels — the door would finish
@@ -281,7 +281,7 @@ export function createSimulatedDriver(options: SimulatedDriverOptions): Simulate
  * Where the bundled scenarios live, resolved from THIS module, not from the working directory.
  * `resolve('scenarios', …)` is relative to `process.cwd()`, and `efk` is meant to be run from a
  * partner's own project: the kit would look for `./scenarios/default.json` inside their repo and
- * fail with a confusing ENOENT. The same reasoning applies to `efk scenarios list` (Task 16).
+ * fail with a confusing ENOENT. The same reasoning applies to `efk scenarios list`.
  */
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
@@ -297,9 +297,9 @@ export function listScenarios(): string[] {
 }
 
 /**
- * One line per bundled scenario, for `efk scenarios list` (Task 16) and for the README.
+ * One line per bundled scenario, for `efk scenarios list` and for the README.
  *
- * `no-interrupt` is the one that needs it (controller ruling R18). Parsed, that file is IDENTICAL to
+ * `no-interrupt` is the one that needs it. Parsed, that file is IDENTICAL to
  * `default.json`: the knob its name promises — `supports_command_interrupt` — is a FLEET capability
  * that lives in `efk.config.ts`, not a per-bot scenario field, so there is nothing for the JSON to
  * say. Without this note it is an inert duplicate of another scenario with no explanation, which is
@@ -326,7 +326,7 @@ export type SimulatedFactoryOptions = {
 }
 
 /**
- * ONE STREAM PER BOT, seeded from its id (controller ruling, Task 15). The factory used to hand the
+ * ONE STREAM PER BOT, seeded from its id. The factory used to hand the
  * SAME `random` function to every driver, which couples each bot's noise to every other bot's
  * command timing: the draws a bot makes per tick depend on its own STATE — `drift()` returns before
  * drawing when its bound is 0, the dwell draws happen only while the bot is progressing, and an idle
@@ -364,8 +364,7 @@ function seededRandom(seed: string): () => number {
  * inside the per-bot factory call — `efk start` calls it once after the roster is known, and C9
  * reports the same list.
  *
- * `DriverFactory` is imported from `robot-driver.ts`, where it is declared once (controller ruling
- * R12): the CLI config loader needs the same type, and re-declaring it here would let the two drift.
+ * `DriverFactory` is imported from `robot-driver.ts`, where it is declared once: the CLI config loader needs the same type, and re-declaring it here would let the two drift.
  * It is parameterised with `SimulatedRobotDriver` so the CLI gets `tick()` and the TUI gets the
  * toggles without a cast, while still assigning to a bare `DriverFactory` wherever the kit only
  * wants a `RobotDriver`.

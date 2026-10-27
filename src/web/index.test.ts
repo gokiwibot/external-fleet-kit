@@ -343,7 +343,7 @@ describe('web dashboard, manual controls (THE SEAM: HTTP route -> shared control
     })
 
     /**
-     * THE STRUCTURAL GUARD (controller ruling, superseding the earlier "warn only" plan): the four
+     * THE STRUCTURAL GUARD: the four
      * control routes must not just refuse on a non-loopback host, they must not EXIST. This is the
      * one test that discriminates a route mounted unconditionally from a route mounted only on
      * loopback — see the mutation note in the task report for the failure this was run against.

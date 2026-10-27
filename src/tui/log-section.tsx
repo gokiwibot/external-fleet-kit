@@ -3,7 +3,7 @@ import { hhmmss, type LogRow, pad } from './model'
 
 const COLOR: Record<LogRow['level'], string | undefined> = { debug: 'gray', info: undefined, warn: 'yellow', error: 'red' }
 
-/** Dropped states are red whatever the level: they are the one thing the partner must not miss (design §8). */
+/** Dropped states are red whatever the level: they are the one thing the partner must not miss. */
 export function LogSection({ rows }: { rows: LogRow[] }) {
     return (
         <Box flexDirection='column'>

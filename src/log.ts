@@ -1,5 +1,5 @@
 /**
- * pino with two guarantees the design asks for (§8): secrets never reach a sink — by key (a key is
+ * pino with two guarantees: secrets never reach a sink — by key (a key is
  * never printed with its value, at any depth) and by value (a scrubber over serialized text, because
  * a token inside a free-text message has no key) — and every line is mirrored onto the bus so the
  * TUI's LOG section and the web dashboard see it. With the TUI mounted the sink is the bus alone:

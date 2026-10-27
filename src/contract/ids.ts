@@ -1,5 +1,5 @@
 /**
- * Identifier grammars, copied from /docs/external-fleets (Global Constraints of the F1–F4 plan).
+ * Identifier grammars, copied from /docs/external-fleets.
  *
  * `BOT_ID_REGEX` is applied to the WHOLE id: the fleet prefix (`ACME-`) is made of the same
  * characters, so one regex covers it. The prefix check is a separate concern (`hasBotIdPrefix`),

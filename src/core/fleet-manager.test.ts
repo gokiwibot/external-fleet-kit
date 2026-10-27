@@ -557,7 +557,7 @@ describe('fleet manager', () => {
 })
 
 /**
- * ORDERLY SHUTDOWN (cross-task debt, Task 16). `stop()` used to clear the interval and walk on to
+ * ORDERLY SHUTDOWN. `stop()` used to clear the interval and walk on to
  * `seq.flush()` without waiting for a tick that had already started. A QoS 1 publish still waiting
  * for its PUBACK — or an HTTP batch still inside `flushTick` — confirms a moment later and consumes
  * a `seq` AFTER the counters have been written, so that increment never reaches `.efk-state.json`.

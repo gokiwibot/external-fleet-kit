@@ -4,10 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-Absorbed from the first fork of the kit that drives real robots. Only what any partner needs; that fork's own driver stays in the fork.
+## [0.1.0] - 2026-10-27
 
-### Changed
-- Samples re-frozen from the contract page at kiwi-platforms `54df6f670` (`data.ts` sha256 `3dea23d7…`), the commit that also records that hash in `KIT_SYNC.json`. They bring `fleet_serial` and `console_url` on the bot samples, the real command id shapes (`door/open/<ms>`, `cancel/<ms>`), `azimuth` on the position sample, and the video endpoint's response. The parity schemas accept `fleet_serial` and `console_url` on a registered bot and know the new sample.
+Contract `2026-09`, samples frozen from kiwi-platforms `54df6f670` (`data.ts` sha256 `3dea23d7…`). The first tagged version: the kit as first written (*Initial kit*, at the end of this entry) plus what its first fork taught it.
+
+Absorbed from the first fork of the kit that drives real robots. Only what any partner needs; that fork's own driver stays in the fork.
 
 ### Added
 - `Dockerfile`, `docker/entrypoint.sh` and `.dockerignore`; README section *Running it in a container*.
@@ -15,12 +16,13 @@ Absorbed from the first fork of the kit that drives real robots. Only what any p
 - `GET /healthz` on the HTTP surface, before the bearer check, for probes that send no headers. It says the process is listening, nothing about the fleet.
 
 - **The roster is re-read every 15 s** (`ROSTER_REFRESH_MS`) instead of being frozen at `start()`. Only the bots that changed are rebuilt; a refresh never parks a fleet that is driving, never rebuilds a bot running a command, and skips its pass if remi is unreachable. `Transport.setBots` tells the HTTP surface and the MQTT connections about the change.
-- **`fleet_serial` and `requires_fleet_serial`** (remi's mapping from its bot id to the partner's own id). `DriverFactory` receives `env.fleetSerial`; `efk start` and `efk check` share one `selectRoster()` so the preflight judges the same bots the start drives. **Added to `src/contract/` by hand**, an exception to CONTRIBUTING: remi already serves both fields, the contract page does not document them yet, and the next `pnpm sync-samples` after it does replaces this.
+- **`fleet_serial` and `requires_fleet_serial`** (remi's mapping from its bot id to the partner's own id). `DriverFactory` receives `env.fleetSerial`; `efk start` and `efk check` share one `selectRoster()` so the preflight judges the same bots the start drives.
 - **Idle start.** An empty roster, an unmapped bot on a fleet that requires `fleet_serial`, or a factory whose new optional `unavailable()` answers a sentence, bring the fleet up with no bots and say once why, instead of refusing to start or throwing once per robot.
 - `sandboxOrigin(env)` in `src/cli/env.ts`: the one place that turns `SANDBOX_CENTER_*` into a position, used by `efk start` and `efk check`. CONTRIBUTING now forbids reading configuration with `Number(process.env.…)`.
-- `DriverSnapshot.azimuth` and `DriverSnapshot.outOfService`, sent as the contract's optional `position.azimuth` and `out_of_service`. The vendored `botStateSchema` is strict, so until now a partner on the kit could not send either field even though the page documents both. The frozen samples are not re-synced here.
+- `DriverSnapshot.azimuth` and `DriverSnapshot.outOfService`, sent as the contract's optional `position.azimuth` and `out_of_service`. The vendored `botStateSchema` is strict, so before this a partner on the kit could not send either field even though the page documents both.
 
 ### Changed
+- Samples re-frozen from the contract page at kiwi-platforms `54df6f670`, the commit that also records their hash in `KIT_SYNC.json`. They bring `fleet_serial` and `console_url` on the bot samples, the real command id shapes (`door/open/<ms>`, `cancel/<ms>`), `azimuth` on the position sample, and the video endpoint's response. The parity schemas accept `fleet_serial` and `console_url` on a registered bot and know the new sample.
 - `SANDBOX_*` are optional; an empty value reads as absent, not as `0`. `efk order` refuses without `SANDBOX_LOCATION_ID`, the simulated driver throws without an origin, C3 compares locations only when a sandbox is set, and C9 skips while the driver is unavailable.
 - **An idle fleet no longer sends an empty capabilities document** (`has_door: false`, no commands). remi does not stop dispatching on it, but it drops every `set_door` and turns `manual_close_door` on for every bot, one-way: the flag stays after a good document arrives and is cleared by hand, bot by bot. An unchanged document is not re-sent either.
 
@@ -30,13 +32,7 @@ Absorbed from the first fork of the kit that drives real robots. Only what any p
 - `available` is the partner's own verdict, one to one; a cached position must not be repeated as current; the partner's idempotency may differ per endpoint; an unconfirmed action is read from telemetry; log the partner's mission id next to remi's command id.
 - `validateDestination`: remi does not call `POST /destinations/validate` in the current release. It stays optional, not removed.
 
-## [0.1.0] - unreleased
-
-The date of this entry is set when the `0.1.0` tag is cut.
-
-Contract `2026-09`, `data.ts` `pending-N2`.
-
-### Added
+### Initial kit
 - `FleetManager`, `BotRuntime`, `CommandLedger`, `Cadence`, persisted `seq` and single-instance lock.
 - `RobotDriver` v1 with `validateDestination`, and a commented partner template.
 - `SimulatedRobotDriver`: straight-line motion with noise, four door modes, battery drain, link modes, destination correction; seven scenarios.

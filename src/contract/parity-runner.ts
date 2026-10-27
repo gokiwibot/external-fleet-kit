@@ -4,8 +4,8 @@
  *  2. every sample file has an expectation (a file nobody claims is a file nobody checks);
  *  3. SOURCE.json exists and names every extracted sample.
  * What it does NOT check: that the published page has not changed. It cannot — the samples live
- * here. That drift is detected in kiwi-platforms (KIT_SYNC.json + CI job), which is what triggers
- * `pnpm sync-samples` and a new kit version.
+ * here. kiwi-platforms records the hash the samples came from in KIT_SYNC.json, kept by hand (no CI
+ * job enforces it); a contract change there is what triggers `pnpm sync-samples` and a new kit version.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'

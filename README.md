@@ -467,7 +467,7 @@ flowchart LR
 | **Artifact** | The Fleet Manager's capabilities step. |
 | **Environment** | Any. |
 | **Response** | Nothing is sent. A document is sent at start and again only when it changed, and never from an idle fleet. The document remi already holds stays in force. |
-| **Response metric** | remi never receives `has_door: false` from an empty fleet. Such a document makes remi drop every `set_door` and turn `manual_close_door` on for every bot, one-way. |
+| **Response metric** | remi never receives a document built from an empty fleet. remi refuses an empty one with 400, but one that lists the required commands and says `has_door: false` only because no bot was connected is stored, and makes remi drop every `set_door` and turn `manual_close_door` on for every bot, one-way. |
 
 ### Security Scenarios
 
@@ -842,7 +842,7 @@ One shape to copy rather than re-derive: remi forms a command id as `<job id>/<s
 
 There is no `.env` in the image. Every variable of [the `.env` you receive](#the-env-you-receive) is read from the environment (`efk` merges `process.env` over the file, and the file is simply absent), so the deployment supplies them as a secret. One variable matters most here:
 
-- **`EFK_STATE_DIR`** (`/state` in the image) — where `.efk.lock` and `.efk-state.json` are written. `/app` is immutable, and the `seq` counters must survive a restart: a counter that resets to 1 makes remi discard every state that follows as older than what it already has. Mount a volume there.
+- **`EFK_STATE_DIR`** (`/state` in the image) — where `.efk.lock` and `.efk-state.json` are written. `/app` is immutable, and the `seq` counters should survive a restart so `seq` keeps increasing per bot. remi orders states by `timestamp` first and uses `seq` only to break a tie, so a counter that resets is accepted at once with a correct clock; the lock is what must survive. Mount a volume there.
 
 The entrypoint removes a leftover `.efk.lock` before starting. Its owner-is-alive check cannot work across containers — pid 1 always exists in a fresh one — so a lock left by a killed predecessor would refuse every restart for ever. That is safe **only** with one replica and a strategy that stops the old container first (see [Consistency Scenarios](#two-instances-for-the-same-fleet)); with two replicas the lock would be doing its job and deleting it would be the bug.
 

@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Documentation
 - `out_of_service` does not make a bot unavailable: remi keeps assigning it, alerts its operators while it carries a job, and clears the alert when the field goes back to `false`. The README and the `botState` schema still described the old behaviour (parked `off_duty`, one-way).
 - Comments say what the code does, without references to internal planning documents.
+- The README no longer says an empty capabilities document turns `manual_close_door` on: remi refuses an empty one with 400. The harm comes from a document that lists the required commands and says `has_door: false` because no bot was connected, which the kit still never sends. The README and the `Dockerfile` no longer say a lost `seq` counter makes remi discard states: remi orders them by `timestamp` first.
 - `SECURITY.md` (private vulnerability reporting), issue forms that point contract questions and integration support at the docs and the onboarding contact, `CODEOWNERS`, and a README section on versioning and support.
 
 ## [0.1.0] - 2026-10-27

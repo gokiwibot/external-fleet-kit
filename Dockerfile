@@ -11,8 +11,9 @@ RUN pnpm install --frozen-lockfile --prod=false
 
 COPY . .
 
-# The lock and the seq counters live here, on the volume, never in the immutable /app: losing the
-# counters would make every bot's seq restart at 1 and remi would discard the states as stale.
+# The lock and the seq counters live here, on the volume, never in the immutable /app. remi orders a
+# bot's states by timestamp first and uses seq only to break a tie, so losing the counters is harmless
+# with a correct clock; keeping them keeps seq increasing across restarts, as the contract asks.
 RUN mkdir -p /state && chown node:node /state
 ENV EFK_STATE_DIR=/state
 

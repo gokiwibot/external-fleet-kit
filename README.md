@@ -892,7 +892,7 @@ external-fleet-kit/
 
 ## 12. Public documentation
 
-remi documents this kit and the sandbox at [`/docs/external-fleets/kit`](https://remi.kiwi/docs/external-fleets/kit), next to the [External Fleets contract](https://remi.kiwi/docs/external-fleets). That page says what this README says, in less space, and links here for detail. When they disagree, this README wins and the page gets corrected: today the page still says that remi does not handle `supports_command_interrupt: false`, which is no longer true (see [Scenarios](#scenarios--what-each-knob-reproduces)).
+remi documents this kit and the sandbox at [`/docs/external-fleets/kit`](https://remi.kiwi/docs/external-fleets/kit), next to the [External Fleets contract](https://remi.kiwi/docs/external-fleets). That page says what this README says, in less space, and links here for detail. When they disagree, this README wins and the page gets corrected.
 
 ## 13. Versioning and support
 
